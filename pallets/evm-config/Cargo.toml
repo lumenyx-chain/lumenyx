@@ -1,0 +1,11 @@
+[package]
+name = "pallet-evm-config"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+sp-core = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
+
+[features]
+default = ["std"]
+std = ["sp-core/std"]

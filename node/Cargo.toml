@@ -1,0 +1,84 @@
+[package]
+name = "lumenyx-node"
+version = "1.0.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+frame-support = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+clap = { version = "4.4", features = ["derive"] }
+futures = "0.3"
+serde_json = "1.0"
+jsonrpsee = { version = "0.24", features = ["server"] }
+log = "0.4"
+tokio = { version = "1.32", features = ["sync", "time"] }
+
+# Substrate client
+sc-cli = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-service = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-executor = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-network = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-network-sync = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-consensus = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-consensus-aura = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-consensus-grandpa = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-client-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-rpc = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-rpc-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-transaction-pool = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-transaction-pool-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-telemetry = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-keystore = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-offchain = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-chain-spec = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-basic-authorship = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+
+# Substrate primitives
+sp-core = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-consensus = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-consensus-aura = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-consensus-grandpa = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-keyring = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-timestamp = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-blockchain = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-block-builder = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-inherents = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-io = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-state-machine = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sp-storage = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+
+# FRAME
+frame-system = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+frame-system-rpc-runtime-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+pallet-transaction-payment = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+pallet-transaction-payment-rpc = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+pallet-transaction-payment-rpc-runtime-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+substrate-frame-rpc-system = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+
+# ============================================
+# FRONTIER - ETHEREUM RPC COMPATIBILITY
+# ============================================
+# These enable MetaMask and all Ethereum tools!
+
+# Frontier primitives
+fp-rpc = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409" }
+fp-storage = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409" }
+fp-evm = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409" }
+
+# Frontier client
+fc-api = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409" }
+fc-rpc = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409", features = ["txpool"] }
+fc-rpc-core = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409" }
+fc-storage = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409" }
+fc-mapping-sync = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409" }
+fc-db = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409" }
+fc-consensus = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409" }
+
+# LUMENYX
+lumenyx-runtime = { path = "../runtime" }
+lumenyx-primitives = { path = "../primitives" }
+
+[build-dependencies]
+substrate-build-script-utils = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
