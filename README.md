@@ -28,10 +28,10 @@ git clone https://github.com/lumenyx-chain/lumenyx
 cd lumenyx
 cargo build --release
 # Run as full node
-./target/release/lumenyx-node --chain mainnet --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWJKcTV1a32Cx7r5xBzuRjanSLcn7KGEVkq3at6xHeKVkh
+./target/release/lumenyx-node --chain mainnet-spec.json --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWJKcTV1a32Cx7r5xBzuRjanSLcn7KGEVkq3at6xHeKVkh
 
 # Run as validator
-./target/release/lumenyx-node --chain mainnet --validator --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWJKcTV1a32Cx7r5xBzuRjanSLcn7KGEVkq3at6xHeKVkh
+./target/release/lumenyx-node --chain mainnet-spec.json --validator --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWJKcTV1a32Cx7r5xBzuRjanSLcn7KGEVkq3at6xHeKVkh
 ```
 ## Become a Validator (Permissionless)
 Anyone can become a validator without permission or contact.
@@ -52,11 +52,11 @@ Use Polkadot.js Apps connected to `ws://localhost:9944`:
 ### Step 3: Register Your Keys
 ```bash
 # Insert AURA key
-./target/release/lumenyx-node key insert --chain mainnet \
+./target/release/lumenyx-node key insert --chain mainnet-spec.json \
   --scheme sr25519 --key-type aura \
   --suri "your twelve word secret phrase"
 # Insert GRANDPA key
-./target/release/lumenyx-node key insert --chain mainnet \
+./target/release/lumenyx-node key insert --chain mainnet-spec.json \
   --scheme ed25519 --key-type gran \
   --suri "your twelve word secret phrase"
 ```
@@ -66,7 +66,7 @@ Using Polkadot.js Apps:
 2. Costs ~0.001 LUMENYX (paid from faucet claim)
 ### Step 5: Start Validating
 ```bash
-./target/release/lumenyx-node --chain mainnet --validator --name "your-name" --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWJKcTV1a32Cx7r5xBzuRjanSLcn7KGEVkq3at6xHeKVkh
+./target/release/lumenyx-node --chain mainnet-spec.json --validator --name "your-name" --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWJKcTV1a32Cx7r5xBzuRjanSLcn7KGEVkq3at6xHeKVkh
 ```
 Your node will start producing blocks in the next era (~1 hour).
 No permission needed. No contact required.
