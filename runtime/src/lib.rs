@@ -76,7 +76,7 @@ pub const RUNTIME_VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: sp_runtime::create_runtime_str!("lumenyx"),
     impl_name: sp_runtime::create_runtime_str!("lumenyx-node"),
     authoring_version: 1,
-    spec_version: 301, // Version 3.0.1 - Session Update!
+    spec_version: 302,
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 2,
@@ -138,11 +138,11 @@ impl_opaque_keys! {
 // SESSION CONFIGURATION - Permissionless Validators!
 // ============================================
 parameter_types! {
-    pub const SessionPeriod: BlockNumber = 10; // 10 blocks = 30 seconds
+    pub const SessionPeriod: BlockNumber = 10;
     pub const SessionOffset: BlockNumber = 0;
 }
 
-/// Permissionless validator set - discovers validators from queued keys
+/// Permissionless validator set - discovers all registered validators
 /// Anyone can become a validator by calling session.setKeys()
 pub struct PermissionlessValidatorSet;
 
@@ -153,33 +153,30 @@ impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
             "🔄 Session {} - Discovering validators...",
             new_index
         );
-        
-        // Get ALL accounts that have registered session keys
-        let queued = pallet_session::QueuedKeys::<Runtime>::get();
-        
-        if queued.is_empty() {
+
+        // Collect all accounts that have registered session keys
+        let validators: Vec<AccountId> = pallet_session::NextKeys::<Runtime>::iter()
+            .map(|(account, _keys)| account)
+            .collect();
+
+        if validators.is_empty() {
             log::warn!(
                 target: "runtime::session",
-                "⚠️ No queued validators, keeping current set"
+                "⚠️ No registered validators, keeping current set"
             );
             return None;
         }
-        
-        let validators: Vec<AccountId> = queued
-            .iter()
-            .map(|(account, _keys)| account.clone())
-            .collect();
-        
+
         log::info!(
             target: "runtime::session",
             "✅ Found {} validator(s) for session {}",
             validators.len(),
             new_index
         );
-        
+
         Some(validators)
     }
-    
+
     fn end_session(_end_index: u32) {}
     fn start_session(_start_index: u32) {}
 }
@@ -242,7 +239,7 @@ impl pallet_balances::Config for Runtime {
 }
 
 parameter_types! {
-    pub const TransactionByteFee: Balance = 100_000_000; // 0.0001 LUMENYX
+    pub const TransactionByteFee: Balance = 100_000_000;
     pub FeeMultiplier: sp_runtime::FixedU128 = sp_runtime::FixedU128::from_u32(1);
 }
 
@@ -305,11 +302,8 @@ impl pallet_privacy::Config for Runtime {
 // VALIDATOR FAUCET - Permissionless Bootstrap
 // ============================================
 parameter_types! {
-    /// Amount given per claim: 2 LUMENYX = 2_000_000_000_000 planck (12 decimals)
     pub const ClaimAmount: u128 = 2_000_000_000_000;
-    /// PoW difficulty: 18 leading zero bits (~2 seconds to compute)
     pub const PowDifficulty: u32 = 18;
-    /// Max claims per block: 5
     pub const MaxClaimsPerBlock: u32 = 5;
 }
 
@@ -324,10 +318,8 @@ impl pallet_validator_faucet::Config for Runtime {
 // EVM CONFIGURATION - ETHEREUM COMPATIBILITY
 // ============================================
 
-/// Current approximation of the gas/s consumption
 pub const GAS_PER_SECOND: u64 = 40_000_000;
 
-/// Maximum weight per block
 pub const MAXIMUM_BLOCK_WEIGHT: Weight = Weight::from_parts(
     WEIGHT_REF_TIME_PER_SECOND * 2,
     u64::MAX,
@@ -345,7 +337,6 @@ parameter_types! {
     pub ChainId: u64 = EVM_CHAIN_ID;
 }
 
-/// LUMENYX Precompiled Contracts
 pub struct LumenyxPrecompiles<R>(sp_std::marker::PhantomData<R>);
 
 impl<R> Default for LumenyxPrecompiles<R> {
@@ -408,7 +399,6 @@ where
     }
 }
 
-/// Fixed gas price for simple fee calculation
 pub struct FixedGasPrice;
 impl FeeCalculator for FixedGasPrice {
     fn min_gas_price() -> (U256, Weight) {
@@ -416,7 +406,6 @@ impl FeeCalculator for FixedGasPrice {
     }
 }
 
-/// Find author for EVM block rewards
 pub struct FindAuthorTruncated<F>(sp_std::marker::PhantomData<F>);
 impl<F: FindAuthor<AccountId>> FindAuthor<H160> for FindAuthorTruncated<F> {
     fn find_author<'a, I>(digests: I) -> Option<H160>
