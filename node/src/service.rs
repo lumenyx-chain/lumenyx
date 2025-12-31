@@ -183,7 +183,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         fee_history_cache_limit,
     } = frontier_partial;
 
-    let net_config = sc_network::config::FullNetworkConfiguration::<
+    let mut net_config = sc_network::config::FullNetworkConfiguration::<
         Block,
         <Block as sp_runtime::traits::Block>::Hash,
         sc_network::NetworkWorker<Block, <Block as sp_runtime::traits::Block>::Hash>,
@@ -195,11 +195,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     let metrics = sc_network::NotificationMetrics::new(config.prometheus_registry());
     let peer_store = sc_network::peer_store::PeerStore::new(vec![], None);
 
-    let (_grandpa_protocol_config, grandpa_notification_service) =
+    let (grandpa_protocol_config, grandpa_notification_service) =
         sc_consensus_grandpa::grandpa_peers_set_config::<
             Block,
             sc_network::NetworkWorker<Block, <Block as sp_runtime::traits::Block>::Hash>,
         >(grandpa_protocol_name.clone(), metrics.clone(), Arc::new(peer_store.handle()));
+    net_config.add_notification_protocol(grandpa_protocol_config);
 
     let warp_sync = Arc::new(sc_consensus_grandpa::warp_proof::NetworkProvider::new(
         backend.clone(),
