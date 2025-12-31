@@ -16,16 +16,26 @@ I've been working on a new electronic cash system that runs without central cont
 - No ICO, no pre-sale, no VC
 - No team allocation, no foundation
 - No governance, no admin keys
+- No premine
 
-**Bootstrap Phase:**
-- 5000 LUMENYX allocated to validator faucet
-- ~840,000 LUMENYX mined in first ~350,000 blocks (~12 days)
-- Required to initialize network security
-- Total: ~4% of supply
+**Original Plan:**
+A 4% bootstrap allocation (~840,000 LUMENYX) was planned to initialize network security.
 
-**Public Distribution:**
-- ~96% of supply via halving schedule (100+ years)
+**What Changed:**
+Consensus issues during multi-validator testing required a network reset. We decided to start fresh - zero allocation, mining from block 0 like everyone else.
+
+**Current Reality:**
+- 5000 LUMENYX in validator faucet (from genesis)
+- We run one validator now, mining alongside you
+- When enough validators join, we leave
+- Before disappearing, anything above 5% will be burned to:
+  `5Gbh1MkL3KSAMmwx7wxYyCYRtzHhXocSAAvcT6gD21L4Q978`
+
+**Supply Distribution:**
+- 100% via halving schedule (100+ years)
 - Fully permissionless
+
+This chain belongs to no one. Run a node. Become a validator. It's yours.
 
 ## Genesis Block
 
