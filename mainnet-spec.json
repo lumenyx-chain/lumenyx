@@ -3,7 +3,7 @@
   "id": "lumenyx_mainnet",
   "chainType": "Live",
   "bootNodes": [
-    "/ip4/127.0.0.1/tcp/30333/p2p/12D3KooWJKcTV1a32Cx7r5xBzuRjanSLcn7KGEVkq3at6xHeKVkh"
+    "/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWAe7PepkGKEzYMZWRZv5VmHuPdgoo1tuWSEoZnAWYrFEp"
   ],
   "telemetryEndpoints": null,
   "protocolId": null,
