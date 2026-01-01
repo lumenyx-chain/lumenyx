@@ -125,10 +125,23 @@ No permission needed. No contact required.
 
 - **Consensus:** AURA (block production) + GRANDPA (finality)
 - **Block time:** 3 seconds
-- **Block reward:** 2.4 LUMENYX, halving every ~4 years
 - **Chain ID:** 7777
 - **Framework:** Substrate + Frontier EVM
 - **Privacy:** Groth16 ZK-SNARKs (optional)
+
+## Emission Schedule
+
+| Phase | Reward | Duration | Purpose |
+|-------|--------|----------|---------|
+| 0 - Bootstrap | 2.4 LUMENYX | ~12 days | High incentive when network needs security most |
+| 1 - Early Adoption | 0.3 LUMENYX | ~30 days | Gradual transition |
+| 2 - Standard | 0.25 LUMENYX | Forever | Halving every ~4 years |
+
+Early validators take the highest risk. The network has no value yet, no guarantee it will work. Higher rewards compensate for this uncertainty.
+
+Same principle as Bitcoin's early 50 BTC blocks - those who believe first, earn most.
+
+The code is public. The rules are visible. Anyone can join now and earn the same rewards.
 
 ## Documentation
 
