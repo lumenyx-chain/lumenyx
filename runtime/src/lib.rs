@@ -71,12 +71,16 @@ pub const EXISTENTIAL_DEPOSIT: Balance = 500;
 /// Using 7777 as a memorable chain ID
 pub const EVM_CHAIN_ID: u64 = 7777;
 
+/// Number of sessions a validator can be inactive before being removed
+/// 100 sessions * 10 blocks/session * 3 sec/block = 50 minutes of inactivity allowed
+pub const MAX_INACTIVE_SESSIONS: u32 = 100;
+
 #[sp_version::runtime_version]
 pub const RUNTIME_VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: sp_runtime::create_runtime_str!("lumenyx"),
     impl_name: sp_runtime::create_runtime_str!("lumenyx-node"),
     authoring_version: 1,
-    spec_version: 302,
+    spec_version: 303,
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 2,
@@ -142,24 +146,60 @@ parameter_types! {
     pub const SessionOffset: BlockNumber = 0;
 }
 
+// ============================================
+// VALIDATOR ACTIVITY TRACKING
+// ============================================
+use frame_support::storage::StorageMap;
+use frame_support::traits::StorageInstance;
+
+/// Storage prefix for validator last active session
+pub struct ValidatorLastActivePrefix;
+impl StorageInstance for ValidatorLastActivePrefix {
+    fn pallet_prefix() -> &'static str { "Session" }
+    const STORAGE_PREFIX: &'static str = "ValidatorLastActive";
+}
+
+/// Maps validator AccountId to the last session they produced a block
+pub type ValidatorLastActive = frame_support::storage::types::StorageMap
+    ValidatorLastActivePrefix,
+    frame_support::Blake2_128Concat,
+    AccountId,
+    u32,
+    frame_support::storage::types::OptionQuery,
+>;
+
 /// Permissionless validator set - discovers all registered validators
+/// and FILTERS OUT inactive ones automatically!
+/// 
 /// Anyone can become a validator by calling session.setKeys()
+/// Validators who don't produce blocks for MAX_INACTIVE_SESSIONS are removed
 pub struct PermissionlessValidatorSet;
 
 impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
     fn new_session(new_index: u32) -> Option<Vec<AccountId>> {
         log::info!(
             target: "runtime::session",
-            "🔄 Session {} - Discovering validators...",
+            "🔄 Session {} - Discovering active validators...",
             new_index
         );
 
+        // Get current block author (if any) and mark them as active
+        if let Some(author) = pallet_authorship::Pallet::<Runtime>::author() {
+            ValidatorLastActive::insert(&author, new_index);
+            log::info!(
+                target: "runtime::session",
+                "✍️ Block author {:?} marked active in session {}",
+                author,
+                new_index
+            );
+        }
+
         // Collect all accounts that have registered session keys
-        let validators: Vec<AccountId> = pallet_session::NextKeys::<Runtime>::iter()
+        let all_registered: Vec<AccountId> = pallet_session::NextKeys::<Runtime>::iter()
             .map(|(account, _keys)| account)
             .collect();
 
-        if validators.is_empty() {
+        if all_registered.is_empty() {
             log::warn!(
                 target: "runtime::session",
                 "⚠️ No registered validators, keeping current set"
@@ -167,18 +207,65 @@ impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
             return None;
         }
 
+        // Filter to only ACTIVE validators
+        let active_validators: Vec<AccountId> = all_registered
+            .into_iter()
+            .filter(|account| {
+                match ValidatorLastActive::get(account) {
+                    Some(last_active) => {
+                        let sessions_inactive = new_index.saturating_sub(last_active);
+                        if sessions_inactive <= MAX_INACTIVE_SESSIONS {
+                            true
+                        } else {
+                            log::warn!(
+                                target: "runtime::session",
+                                "🚫 Validator {:?} inactive for {} sessions, removing from set",
+                                account,
+                                sessions_inactive
+                            );
+                            ValidatorLastActive::remove(account);
+                            false
+                        }
+                    }
+                    None => {
+                        ValidatorLastActive::insert(account, new_index);
+                        log::info!(
+                            target: "runtime::session",
+                            "🆕 New validator {:?} given {} sessions to produce blocks",
+                            account,
+                            MAX_INACTIVE_SESSIONS
+                        );
+                        true
+                    }
+                }
+            })
+            .collect();
+
+        if active_validators.is_empty() {
+            log::error!(
+                target: "runtime::session",
+                "❌ No active validators! This should never happen. Keeping current set."
+            );
+            return None;
+        }
+
         log::info!(
             target: "runtime::session",
-            "✅ Found {} validator(s) for session {}",
-            validators.len(),
-            new_index
+            "✅ Session {}: {} active validator(s)",
+            new_index,
+            active_validators.len()
         );
 
-        Some(validators)
+        Some(active_validators)
     }
 
     fn end_session(_end_index: u32) {}
-    fn start_session(_start_index: u32) {}
+    
+    fn start_session(start_index: u32) {
+        if let Some(author) = pallet_authorship::Pallet::<Runtime>::author() {
+            ValidatorLastActive::insert(&author, start_index);
+        }
+    }
 }
 
 impl pallet_session::Config for Runtime {
@@ -264,11 +351,13 @@ impl FindAuthor<AccountId> for AuraAccountAdapter {
     }
 }
 
-/// Handler that issues block rewards when a block is authored
+/// Handler that issues block rewards AND tracks validator activity
 pub struct BlockRewardHandler;
 impl pallet_authorship::EventHandler<AccountId, BlockNumber> for BlockRewardHandler {
     fn note_author(author: AccountId) {
         let _ = Halving::issue_block_reward(&author);
+        let current_session = pallet_session::Pallet::<Runtime>::current_index();
+        ValidatorLastActive::insert(&author, current_session);
     }
 }
 
@@ -493,7 +582,7 @@ pub type SignedExtra = (
 );
 pub type UncheckedExtrinsic = fp_self_contained::UncheckedExtrinsic<Address, RuntimeCall, Signature, SignedExtra>;
 pub type SignedPayload = generic::SignedPayload<RuntimeCall, SignedExtra>;
-pub type Executive = frame_executive::Executive<
+pub type Executive = frame_executive::Executive
     Runtime,
     Block,
     frame_system::ChainContext<Runtime>,
@@ -503,32 +592,17 @@ pub type Executive = frame_executive::Executive<
 
 construct_runtime!(
     pub struct Runtime {
-        // Core
         System: frame_system,
         Timestamp: pallet_timestamp,
-
-        // Session (for permissionless validators)
         Session: pallet_session,
-
-        // Consensus
         Aura: pallet_aura,
         Grandpa: pallet_grandpa,
-
-        // Token
         Balances: pallet_balances,
         TransactionPayment: pallet_transaction_payment,
-
-        // Block authoring
         Authorship: pallet_authorship,
-
-        // LUMENYX Custom
         Halving: pallet_halving,
         Privacy: pallet_privacy,
-
-        // Validator Faucet - Permissionless bootstrap
         ValidatorFaucet: pallet_validator_faucet,
-
-        // EVM - ETHEREUM SMART CONTRACTS
         EVM: pallet_evm,
         Ethereum: pallet_ethereum,
         BaseFee: pallet_base_fee,
@@ -704,9 +778,7 @@ impl_runtime_apis! {
     // ============================================
 
     impl fp_rpc::EthereumRuntimeRPCApi<Block> for Runtime {
-        fn chain_id() -> u64 {
-            EVM_CHAIN_ID
-        }
+        fn chain_id() -> u64 { EVM_CHAIN_ID }
 
         fn account_basic(address: H160) -> EVMAccount {
             let (account, _) = pallet_evm::Pallet::<Runtime>::account_basic(&address);
