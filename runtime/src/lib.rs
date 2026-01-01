@@ -160,7 +160,7 @@ impl StorageInstance for ValidatorLastActivePrefix {
 }
 
 /// Maps validator AccountId to the last session they produced a block
-pub type ValidatorLastActive = frame_support::storage::types::StorageMap
+pub type ValidatorLastActive = frame_support::storage::types::StorageMap<
     ValidatorLastActivePrefix,
     frame_support::Blake2_128Concat,
     AccountId,
@@ -582,7 +582,7 @@ pub type SignedExtra = (
 );
 pub type UncheckedExtrinsic = fp_self_contained::UncheckedExtrinsic<Address, RuntimeCall, Signature, SignedExtra>;
 pub type SignedPayload = generic::SignedPayload<RuntimeCall, SignedExtra>;
-pub type Executive = frame_executive::Executive
+pub type Executive = frame_executive::Executive<
     Runtime,
     Block,
     frame_system::ChainContext<Runtime>,
