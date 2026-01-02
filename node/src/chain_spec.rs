@@ -7,10 +7,10 @@
 //! - Distribution: 100% through mining (block rewards)
 //! - No pre-allocations. No reserves. Pure fair launch.
 //! - Permissionless validation: Anyone can become a validator!
+//! - NO GRANDPA = UNSTOPPABLE like Bitcoin!
 
 use sc_service::ChainType;
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
-use sp_consensus_grandpa::AuthorityId as GrandpaId;
 use sp_core::{sr25519, Pair, Public, crypto::Ss58Codec};
 use sp_runtime::traits::{IdentifyAccount, Verify};
 use lumenyx_runtime::{AccountId, Signature, WASM_BINARY, SessionKeys};
@@ -23,8 +23,8 @@ pub type ChainSpec = sc_service::GenericChainSpec;
 // GENESIS CONSTANTS
 // ============================================
 
-/// Genesis block message
-pub const GENESIS_MESSAGE: &str = "Banks ended up in the headlines. Today control over digital money sits in a few hands: founders, large holders, intermediaries and those who write the rules.";
+/// Genesis block message - The reason LUMENYX exists
+pub const GENESIS_MESSAGE: &str = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks. LUMENYX: Unstoppable like Bitcoin, fast like Solana.";
 
 /// Network properties
 pub const TOKEN_DECIMALS: u32 = 12;
@@ -49,17 +49,17 @@ where
     AccountPublic::from(get_from_seed::<TPublic>(seed)).into_account()
 }
 
-pub fn authority_keys_from_seed(s: &str) -> (AccountId, AuraId, GrandpaId) {
+/// Get authority keys - only AURA needed (no GRANDPA!)
+pub fn authority_keys_from_seed(s: &str) -> (AccountId, AuraId) {
     (
         get_account_id_from_seed::<sr25519::Public>(s),
         get_from_seed::<AuraId>(s),
-        get_from_seed::<GrandpaId>(s),
     )
 }
 
-/// Create session keys from Aura and Grandpa keys
-fn session_keys(aura: AuraId, grandpa: GrandpaId) -> SessionKeys {
-    SessionKeys { aura, grandpa }
+/// Create session keys - only AURA (no GRANDPA!)
+fn session_keys(aura: AuraId) -> SessionKeys {
+    SessionKeys { aura }
 }
 
 // ============================================
@@ -67,7 +67,7 @@ fn session_keys(aura: AuraId, grandpa: GrandpaId) -> SessionKeys {
 // ============================================
 
 fn development_genesis(
-    initial_authorities: Vec<(AccountId, AuraId, GrandpaId)>,
+    initial_authorities: Vec<(AccountId, AuraId)>,
     endowed_accounts: Vec<AccountId>,
 ) -> serde_json::Value {
     serde_json::json!({
@@ -77,15 +77,13 @@ fn development_genesis(
         "session": {
             "keys": initial_authorities
                 .iter()
-                .map(|x| (x.0.clone(), x.0.clone(), session_keys(x.1.clone(), x.2.clone())))
+                .map(|x| (x.0.clone(), x.0.clone(), session_keys(x.1.clone())))
                 .collect::<Vec<_>>(),
         },
         "aura": {
             "authorities": Vec::<AuraId>::new(),
         },
-        "grandpa": {
-            "authorities": Vec::<(GrandpaId, u64)>::new(),
-        },
+        // NO GRANDPA!
         "evm": {
             "accounts": {
                 "0xd43593c715fdd31c61141abd04a99fd6822c8558": {
@@ -149,7 +147,7 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 }
 
 // ============================================
-// MAINNET CONFIG - THE REAL DEAL
+// MAINNET CONFIG - THE REAL DEAL - UNSTOPPABLE!
 // ============================================
 
 /// ✅ Genesis allocation: 100% Mining (fair launch)
@@ -157,12 +155,12 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 /// 
 /// HOW TO BECOME A VALIDATOR:
 /// 1. Run: ./lumenyx-node --chain mainnet --validator
-/// 2. Keys are auto-generated on first run
+/// 2. Run: python3 scripts/become_validator.py
 /// 3. You start validating in the next session (~30 seconds)
 /// 
-/// That's it! Just run the node!
+/// That's it! The network NEVER stops.
 fn mainnet_genesis(
-    initial_authorities: Vec<(AccountId, AuraId, GrandpaId)>,
+    initial_authorities: Vec<(AccountId, AuraId)>,
 ) -> serde_json::Value {
     // Faucet allocation: 5000 LUMENYX for validator bootstrap
     // PalletId must match pallet-validator-faucet PALLET_ID
@@ -180,33 +178,34 @@ fn mainnet_genesis(
         "session": {
             "keys": initial_authorities
                 .iter()
-                .map(|x| (x.0.clone(), x.0.clone(), session_keys(x.1.clone(), x.2.clone())))
+                .map(|x| (x.0.clone(), x.0.clone(), session_keys(x.1.clone())))
                 .collect::<Vec<_>>(),
         },
         "aura": {
             "authorities": Vec::<AuraId>::new(),
         },
-        "grandpa": {
-            "authorities": Vec::<(GrandpaId, u64)>::new(),
-        },
+        // NO GRANDPA! Network is unstoppable like Bitcoin.
         "evm": {
             "accounts": {}
         },
     })
 }
 
-/// ✅ REAL Mainnet configuration
+/// ✅ REAL Mainnet configuration - UNSTOPPABLE!
 /// 
 /// LUMENYX - Fair Launch Blockchain
+/// Like Bitcoin: 21M supply, no governance, never stops
+/// Unlike Bitcoin: 3 sec blocks, 18 sec finality, EVM smart contracts
 /// 
 /// Anyone can become a validator by running:
 /// ./lumenyx-node --chain mainnet --validator
+/// python3 scripts/become_validator.py
 pub fn mainnet_config() -> Result<ChainSpec, String> {
-    // Genesis validator - uses your AURA_1 key
+    // Genesis validator - uses your AURA key
     // After launch, anyone can join by running --validator
-    let initial_authorities: Vec<(AccountId, AuraId, GrandpaId)> = vec![
+    let initial_authorities: Vec<(AccountId, AuraId)> = vec![
         (
-            // Account ID (same as AURA for simplicity)
+            // Account ID (same as AURA)
             AccountId::from(
                 sp_core::sr25519::Public::from_ss58check("5Fe12bNT7xmTzoi46CoYgFPZccskFTgx2CN7S48deyHvZXPs")
                     .expect("Valid SS58 address")
@@ -214,9 +213,7 @@ pub fn mainnet_config() -> Result<ChainSpec, String> {
             // AURA key (sr25519) - block production
             AuraId::from_ss58check("5Fe12bNT7xmTzoi46CoYgFPZccskFTgx2CN7S48deyHvZXPs")
                 .expect("Valid SS58 address"),
-            // GRANDPA key (ed25519) - block finalization
-            GrandpaId::from_ss58check("5ChvxM9taAxbfKwhibbqBpRXQPDjjzNJa8DFuky8Psaq8kTo")
-                .expect("Valid SS58 address"),
+            // NO GRANDPA KEY NEEDED!
         ),
     ];
 
