@@ -49,10 +49,10 @@ cd lumenyx
 cargo build --release
 
 # Run as full node
-./target/release/lumenyx-node --chain mainnet --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWSnyAJBQoKRQL3SWgYu5LKqEsAYfN5JWtzoc2NKgGb5ZJ
+./target/release/lumenyx-node --chain mainnet --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWFvS5t55gVhjtzP4egiWMZKtjdPDQg9HxCkXDXNmeH2V1
 
 # Run as validator
-./target/release/lumenyx-node --chain mainnet --validator --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWSnyAJBQoKRQL3SWgYu5LKqEsAYfN5JWtzoc2NKgGb5ZJ
+./target/release/lumenyx-node --chain mainnet --validator --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWFvS5t55gVhjtzP4egiWMZKtjdPDQg9HxCkXDXNmeH2V1
 ```
 
 ## Become a Validator (Permissionless)
@@ -98,7 +98,7 @@ Using Polkadot.js Apps:
 
 ### Step 5: Start Validating
 ```bash
-./target/release/lumenyx-node --chain mainnet --validator --name "your-name" --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWSnyAJBQoKRQL3SWgYu5LKqEsAYfN5JWtzoc2NKgGb5ZJ
+./target/release/lumenyx-node --chain mainnet --validator --name "your-name" --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWFvS5t55gVhjtzP4egiWMZKtjdPDQg9HxCkXDXNmeH2V1
 ```
 
 Your node will start producing blocks in the next era (~1 hour).
