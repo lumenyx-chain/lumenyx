@@ -148,6 +148,7 @@ The code is public. The rules are visible. Anyone can join now and earn the same
 - [Installation Guide](docs/INSTALL.md)
 - [Whitepaper](docs/WHITEPAPER.md)
 - [ZK Privacy](docs/ZK_PRIVACY.md)
+- [Bootnodes List](https://github.com/lumenyx-chain/lumenyx/wiki) - Community-maintained
 
 ## EVM Compatibility
 
