@@ -230,3 +230,10 @@ GPL-3.0
 No company. No foundation. No website. No social media.
 Just code and consensus.
 Use at your own risk.
+
+## Community Bootnodes
+
+Help decentralize the network by running a bootnode:
+- [Bootnodes List](https://github.com/lumenyx-chain/lumenyx/wiki) - Community-maintained
+
+To add yours, edit the wiki page with your bootnode info.
