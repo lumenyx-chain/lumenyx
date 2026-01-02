@@ -6,7 +6,6 @@ members = [
     "runtime",
     "pallets/privacy",
     "pallets/halving",
-    "pallets/evm-config",
     "primitives",
     "pallets/validator-faucet",
 ]
@@ -35,7 +34,6 @@ hex-literal = "0.4"
 # Local pallets
 pallet-privacy = { path = "pallets/privacy", default-features = false }
 pallet-halving = { path = "pallets/halving", default-features = false }
-pallet-evm-config = { path = "pallets/evm-config", default-features = false }
 lumenyx-primitives = { path = "primitives", default-features = false }
 
 [profile.release]
