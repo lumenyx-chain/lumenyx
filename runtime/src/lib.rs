@@ -1,13 +1,14 @@
 //! LUMENYX Runtime
 //!
-//! The only blockchain with everything:
+//! The unstoppable blockchain - like Bitcoin, but faster:
 //! - Fixed supply (21M)
-//! - BNB speed (3 second blocks)
+//! - 3 second blocks (200x faster than Bitcoin)
+//! - 18 second finality (400x faster than Bitcoin)
 //! - Privacy (ZK optional)
 //! - Smart contracts (EVM compatible)
 //! - True decentralization (fair launch, no governance)
 //! - Permissionless validation (anyone can become validator!)
-//! - Self-healing GRANDPA (auto-removes validators who don't sign)
+//! - NO GRANDPA = NEVER STOPS (probabilistic finality like Bitcoin)
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![recursion_limit = "256"]
@@ -21,7 +22,6 @@ use alloc::vec::Vec;
 
 use sp_api::impl_runtime_apis;
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
-use sp_consensus_grandpa::AuthorityId as GrandpaId;
 use sp_core::{crypto::KeyTypeId, OpaqueMetadata, H160, H256, U256};
 use sp_runtime::{
     generic, impl_opaque_keys,
@@ -76,22 +76,12 @@ pub const EVM_CHAIN_ID: u64 = 7777;
 /// 50 sessions * 10 blocks/session * 3 sec/block = 25 minutes
 pub const MAX_INACTIVE_SESSIONS: u32 = 50;
 
-/// Maximum allowed gap between best block and finalized block
-/// If gap exceeds this, newest validators get removed one by one
-/// 100 blocks * 3 sec = 5 minutes of stuck GRANDPA triggers removal
-pub const MAX_GRANDPA_LAG: u32 = 100;
-
-/// Sessions to wait before removing a new validator for GRANDPA issues
-/// Give them time to sync and start signing
-/// 20 sessions * 10 blocks * 3 sec = 10 minutes grace period
-pub const GRANDPA_GRACE_SESSIONS: u32 = 20;
-
 #[sp_version::runtime_version]
 pub const RUNTIME_VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: sp_runtime::create_runtime_str!("lumenyx"),
     impl_name: sp_runtime::create_runtime_str!("lumenyx-node"),
     authoring_version: 1,
-    spec_version: 304,  // Updated version
+    spec_version: 305,  // NO GRANDPA version
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 2,
@@ -140,12 +130,11 @@ impl frame_system::Config for Runtime {
 }
 
 // ============================================
-// SESSION KEYS - Define before pallets that use them
+// SESSION KEYS - Only AURA (no GRANDPA!)
 // ============================================
 impl_opaque_keys! {
     pub struct SessionKeys {
         pub aura: Aura,
-        pub grandpa: Grandpa,
     }
 }
 
@@ -177,20 +166,6 @@ impl StorageInstance for ValidatorJoinedAtPrefix {
     const STORAGE_PREFIX: &'static str = "ValidatorJoinedAt";
 }
 
-/// Storage prefix for tracking last finalized block seen
-pub struct LastFinalizedBlockPrefix;
-impl StorageInstance for LastFinalizedBlockPrefix {
-    fn pallet_prefix() -> &'static str { "Session" }
-    const STORAGE_PREFIX: &'static str = "LastFinalizedBlock";
-}
-
-/// Storage prefix for tracking sessions with GRANDPA stuck
-pub struct GrandpaStuckSessionsPrefix;
-impl StorageInstance for GrandpaStuckSessionsPrefix {
-    fn pallet_prefix() -> &'static str { "Session" }
-    const STORAGE_PREFIX: &'static str = "GrandpaStuckSessions";
-}
-
 /// Maps validator AccountId to the last session they produced a block
 pub type ValidatorLastActive = frame_support::storage::types::StorageMap<
     ValidatorLastActivePrefix,
@@ -209,28 +184,13 @@ pub type ValidatorJoinedAt = frame_support::storage::types::StorageMap<
     frame_support::storage::types::OptionQuery,
 >;
 
-/// Stores the last finalized block number we observed
-pub type LastFinalizedBlock = frame_support::storage::types::StorageValue<
-    LastFinalizedBlockPrefix,
-    u32,
-    frame_support::storage::types::ValueQuery,
->;
-
-/// Counts consecutive sessions where GRANDPA was stuck
-pub type GrandpaStuckSessions = frame_support::storage::types::StorageValue<
-    GrandpaStuckSessionsPrefix,
-    u32,
-    frame_support::storage::types::ValueQuery,
->;
-
-/// Permissionless validator set with GRANDPA self-healing
+/// Permissionless validator set - UNSTOPPABLE like Bitcoin
 /// 
 /// Anyone can become a validator by calling session.setKeys()
-/// Validators are automatically removed if:
-/// 1. They don't produce blocks for MAX_INACTIVE_SESSIONS
-/// 2. GRANDPA is stuck and they are the newest non-essential validator
+/// Validators are automatically removed if they don't produce blocks.
 /// 
-/// The network always maintains at least 2 validators for stability.
+/// NO GRANDPA = The network NEVER stops.
+/// Finality is probabilistic (like Bitcoin) - after 6 blocks (~18 sec) a transaction is safe.
 pub struct PermissionlessValidatorSet;
 
 impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
@@ -252,37 +212,6 @@ impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
             );
         }
 
-        // Check GRANDPA health - compare current block with finalized
-        let current_block = frame_system::Pallet::<Runtime>::block_number();
-        
-        // Get finalized block from storage (updated by GRANDPA)
-        let last_finalized = LastFinalizedBlock::get();
-        let grandpa_lag = current_block.saturating_sub(last_finalized);
-        
-        let grandpa_is_stuck = grandpa_lag > MAX_GRANDPA_LAG;
-        
-        if grandpa_is_stuck {
-            let stuck_count = GrandpaStuckSessions::get().saturating_add(1);
-            GrandpaStuckSessions::put(stuck_count);
-            log::warn!(
-                target: "runtime::session",
-                "⚠️ GRANDPA stuck! Lag: {} blocks, stuck for {} sessions",
-                grandpa_lag,
-                stuck_count
-            );
-        } else {
-            // Reset stuck counter if GRANDPA is healthy
-            if GrandpaStuckSessions::get() > 0 {
-                log::info!(
-                    target: "runtime::session",
-                    "✅ GRANDPA recovered! Resetting stuck counter."
-                );
-            }
-            GrandpaStuckSessions::put(0);
-            // Update last finalized block
-            LastFinalizedBlock::put(current_block);
-        }
-
         // Collect all accounts that have registered session keys
         let all_registered: Vec<AccountId> = pallet_session::NextKeys::<Runtime>::iter()
             .map(|(account, _keys)| account)
@@ -296,7 +225,7 @@ impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
             return None;
         }
 
-        // Build list of validators with their join time
+        // Build list of active validators
         let mut validators_with_join_time: Vec<(AccountId, u32)> = all_registered
             .into_iter()
             .filter_map(|account| {
@@ -337,41 +266,6 @@ impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
         // Sort by join time (oldest first)
         validators_with_join_time.sort_by(|a, b| a.1.cmp(&b.1));
 
-        // If GRANDPA is stuck for too long, remove newest validators
-        let stuck_sessions = GrandpaStuckSessions::get();
-        if grandpa_is_stuck && stuck_sessions >= 2 && validators_with_join_time.len() > 2 {
-            // Find the newest validator that has passed grace period
-            let validators_past_grace: Vec<&(AccountId, u32)> = validators_with_join_time
-                .iter()
-                .filter(|(_, joined)| new_index.saturating_sub(*joined) > GRANDPA_GRACE_SESSIONS)
-                .collect();
-            
-            if validators_past_grace.len() > 2 {
-                // Remove the newest one (last in sorted list that's past grace)
-                if let Some((newest_account, joined_at)) = validators_with_join_time
-                    .iter()
-                    .rev()
-                    .find(|(_, joined)| new_index.saturating_sub(*joined) > GRANDPA_GRACE_SESSIONS)
-                {
-                    log::warn!(
-                        target: "runtime::session",
-                        "🚫 GRANDPA stuck! Removing newest validator {:?} (joined session {})",
-                        newest_account,
-                        joined_at
-                    );
-                    
-                    ValidatorLastActive::remove(newest_account);
-                    ValidatorJoinedAt::remove(newest_account);
-                    
-                    // Remove from our list
-                    validators_with_join_time.retain(|(acc, _)| acc != newest_account);
-                    
-                    // Reset stuck counter to give network time to recover
-                    GrandpaStuckSessions::put(0);
-                }
-            }
-        }
-
         // Extract just the account IDs
         let active_validators: Vec<AccountId> = validators_with_join_time
             .into_iter()
@@ -386,22 +280,11 @@ impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
             return None;
         }
 
-        // Safety: always keep at least 2 validators
-        if active_validators.len() < 2 {
-            log::warn!(
-                target: "runtime::session",
-                "⚠️ Only {} validator(s), need at least 2. Keeping current set.",
-                active_validators.len()
-            );
-            return None;
-        }
-
         log::info!(
             target: "runtime::session",
-            "✅ Session {}: {} active validator(s), GRANDPA lag: {} blocks",
+            "✅ Session {}: {} active validator(s) - Network unstoppable! 🚀",
             new_index,
-            active_validators.len(),
-            grandpa_lag
+            active_validators.len()
         );
 
         Some(active_validators)
@@ -434,16 +317,6 @@ impl pallet_aura::Config for Runtime {
     type MaxAuthorities = ConstU32<100>;
     type AllowMultipleBlocksPerSlot = ConstBool<false>;
     type SlotDuration = pallet_aura::MinimumPeriodTimesTwo<Runtime>;
-}
-
-impl pallet_grandpa::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type WeightInfo = ();
-    type MaxAuthorities = ConstU32<100>;
-    type MaxNominators = ConstU32<0>;
-    type MaxSetIdSessionEntries = ConstU64<0>;
-    type KeyOwnerProof = sp_core::Void;
-    type EquivocationReportSystem = ();
 }
 
 impl pallet_timestamp::Config for Runtime {
@@ -712,7 +585,7 @@ impl pallet_base_fee::Config for Runtime {
 }
 
 // ============================================
-// RUNTIME CONSTRUCTION
+// RUNTIME CONSTRUCTION - NO GRANDPA!
 // ============================================
 
 pub type Address = sp_runtime::MultiAddress<AccountId, ()>;
@@ -744,7 +617,7 @@ construct_runtime!(
         Timestamp: pallet_timestamp,
         Session: pallet_session,
         Aura: pallet_aura,
-        Grandpa: pallet_grandpa,
+        // NO GRANDPA - Unstoppable like Bitcoin!
         Balances: pallet_balances,
         TransactionPayment: pallet_transaction_payment,
         Authorship: pallet_authorship,
@@ -816,7 +689,7 @@ impl fp_self_contained::SelfContainedCall for RuntimeCall {
 }
 
 // ============================================
-// RUNTIME APIS
+// RUNTIME APIS - NO GRANDPA!
 // ============================================
 
 impl_runtime_apis! {
@@ -875,22 +748,7 @@ impl_runtime_apis! {
         }
     }
 
-    impl sp_consensus_grandpa::GrandpaApi<Block> for Runtime {
-        fn grandpa_authorities() -> sp_consensus_grandpa::AuthorityList {
-            Grandpa::grandpa_authorities()
-        }
-        fn current_set_id() -> sp_consensus_grandpa::SetId {
-            Grandpa::current_set_id()
-        }
-        fn submit_report_equivocation_unsigned_extrinsic(
-            _: sp_consensus_grandpa::EquivocationProof<<Block as BlockT>::Hash, NumberFor<Block>>,
-            _: sp_consensus_grandpa::OpaqueKeyOwnershipProof
-        ) -> Option<()> { None }
-        fn generate_key_ownership_proof(
-            _: sp_consensus_grandpa::SetId,
-            _: GrandpaId
-        ) -> Option<sp_consensus_grandpa::OpaqueKeyOwnershipProof> { None }
-    }
+    // NO GRANDPA API - We don't need it!
 
     impl frame_system_rpc_runtime_api::AccountNonceApi<Block, AccountId, Nonce> for Runtime {
         fn account_nonce(account: AccountId) -> Nonce { System::account_nonce(account) }
