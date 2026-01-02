@@ -10,7 +10,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use futures::prelude::*;
 use lumenyx_runtime::{self, opaque::Block, RuntimeApi};
-use sc_client_api::{Backend, BlockBackend, BlockchainEvents};
+use sc_client_api::BlockchainEvents;
 use sc_consensus_aura::{ImportQueueParams, SlotProportion, StartAuraParams};
 use sc_executor::WasmExecutor;
 use sc_service::{
@@ -20,7 +20,6 @@ use sc_telemetry::{Telemetry, TelemetryWorker};
 use sp_consensus_aura::sr25519::AuthorityPair as AuraPair;
 
 // Frontier imports
-use fc_db::DatabaseSource;
 use fc_mapping_sync::{EthereumBlockNotification, EthereumBlockNotificationSinks, SyncStrategy, kv::MappingSyncWorker};
 use fc_rpc::EthTask;
 use fc_rpc_core::types::{FeeHistoryCache, FeeHistoryCacheLimit, FilterPool};
@@ -47,21 +46,17 @@ pub struct FrontierPartialComponents {
     pub fee_history_cache_limit: FeeHistoryCacheLimit,
 }
 
-/// Block import type - just AURA, no GRANDPA wrapper
-type AuraBlockImport = sc_consensus_aura::AuraBlockImport<Block, FullClient, FullClient, FullSelectChain>;
-
 /// Create partial components for the LUMENYX node
 pub fn new_partial(
     config: &Configuration,
-) -> Result<
-    sc_service::PartialComponents<
+) -> Result
+    sc_service::PartialComponents
         FullClient,
         FullBackend,
         FullSelectChain,
         sc_consensus::DefaultImportQueue<Block>,
         sc_transaction_pool::FullPool<Block, FullClient>,
         (
-            AuraBlockImport,
             Option<Telemetry>,
             Arc<FrontierBackend>,
             FrontierPartialComponents,
@@ -81,7 +76,7 @@ pub fn new_partial(
         .transpose()?;
 
     let executor = sc_service::new_wasm_executor::<sp_io::SubstrateHostFunctions>(&config.executor);
-    
+
     let (client, backend, keystore_container, task_manager) = sc_service::new_full_parts::<Block, RuntimeApi, _>(
         config,
         telemetry.as_ref().map(|(_, telemetry)| telemetry.handle()),
@@ -104,16 +99,11 @@ pub fn new_partial(
         client.clone(),
     );
 
-    // NO GRANDPA block import - just AURA!
-    let block_import = sc_consensus_aura::AuraBlockImport::new(
-        client.clone(),
-        client.clone(),
-    );
-
     let slot_duration = sc_consensus_aura::slot_duration(&*client)?;
 
+    // Direct client as block import - no wrapper needed for AURA-only
     let import_queue = sc_consensus_aura::import_queue::<AuraPair, _, _, _, _, _>(ImportQueueParams {
-        block_import: block_import.clone(),
+        block_import: client.clone(),
         justification_import: None,  // NO GRANDPA justifications!
         client: client.clone(),
         create_inherent_data_providers: move |_, ()| async move {
@@ -161,7 +151,7 @@ pub fn new_partial(
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (block_import, telemetry, frontier_backend, frontier_partial),
+        other: (telemetry, frontier_backend, frontier_partial),
     })
 }
 
@@ -176,7 +166,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (block_import, mut telemetry, frontier_backend, frontier_partial),
+        other: (mut telemetry, frontier_backend, frontier_partial),
     } = new_partial(&config)?;
 
     let FrontierPartialComponents {
@@ -185,7 +175,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         fee_history_cache_limit,
     } = frontier_partial;
 
-    let mut net_config = sc_network::config::FullNetworkConfiguration::<
+    let net_config = sc_network::config::FullNetworkConfiguration::
         Block,
         <Block as sp_runtime::traits::Block>::Hash,
         sc_network::NetworkWorker<Block, <Block as sp_runtime::traits::Block>::Hash>,
@@ -360,7 +350,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 slot_duration,
                 client: client.clone(),
                 select_chain,
-                block_import,
+                block_import: client.clone(),
                 proposer_factory,
                 create_inherent_data_providers: move |_, ()| async move {
                     let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
@@ -383,7 +373,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         )?;
 
         task_manager.spawn_essential_handle().spawn_blocking("aura", Some("block-authoring"), aura);
-        
+
         log::info!("🚀 LUMENYX Validator started - UNSTOPPABLE like Bitcoin!");
     }
 
