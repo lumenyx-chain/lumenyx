@@ -7,6 +7,7 @@
 //! - Smart contracts (EVM compatible)
 //! - True decentralization (fair launch, no governance)
 //! - Permissionless validation (anyone can become validator!)
+//! - Self-healing GRANDPA (auto-removes validators who don't sign)
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![recursion_limit = "256"]
@@ -71,16 +72,26 @@ pub const EXISTENTIAL_DEPOSIT: Balance = 500;
 /// Using 7777 as a memorable chain ID
 pub const EVM_CHAIN_ID: u64 = 7777;
 
-/// Number of sessions a validator can be inactive before being removed
-/// 100 sessions * 10 blocks/session * 3 sec/block = 50 minutes of inactivity allowed
-pub const MAX_INACTIVE_SESSIONS: u32 = 100;
+/// Number of sessions a validator can be inactive (not producing blocks) before removal
+/// 50 sessions * 10 blocks/session * 3 sec/block = 25 minutes
+pub const MAX_INACTIVE_SESSIONS: u32 = 50;
+
+/// Maximum allowed gap between best block and finalized block
+/// If gap exceeds this, newest validators get removed one by one
+/// 100 blocks * 3 sec = 5 minutes of stuck GRANDPA triggers removal
+pub const MAX_GRANDPA_LAG: u32 = 100;
+
+/// Sessions to wait before removing a new validator for GRANDPA issues
+/// Give them time to sync and start signing
+/// 20 sessions * 10 blocks * 3 sec = 10 minutes grace period
+pub const GRANDPA_GRACE_SESSIONS: u32 = 20;
 
 #[sp_version::runtime_version]
 pub const RUNTIME_VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: sp_runtime::create_runtime_str!("lumenyx"),
     impl_name: sp_runtime::create_runtime_str!("lumenyx-node"),
     authoring_version: 1,
-    spec_version: 303,
+    spec_version: 304,  // Updated version
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 2,
@@ -152,11 +163,32 @@ parameter_types! {
 use frame_support::storage::StorageMap;
 use frame_support::traits::StorageInstance;
 
-/// Storage prefix for validator last active session
+/// Storage prefix for validator last active session (block production)
 pub struct ValidatorLastActivePrefix;
 impl StorageInstance for ValidatorLastActivePrefix {
     fn pallet_prefix() -> &'static str { "Session" }
     const STORAGE_PREFIX: &'static str = "ValidatorLastActive";
+}
+
+/// Storage prefix for tracking when each validator joined
+pub struct ValidatorJoinedAtPrefix;
+impl StorageInstance for ValidatorJoinedAtPrefix {
+    fn pallet_prefix() -> &'static str { "Session" }
+    const STORAGE_PREFIX: &'static str = "ValidatorJoinedAt";
+}
+
+/// Storage prefix for tracking last finalized block seen
+pub struct LastFinalizedBlockPrefix;
+impl StorageInstance for LastFinalizedBlockPrefix {
+    fn pallet_prefix() -> &'static str { "Session" }
+    const STORAGE_PREFIX: &'static str = "LastFinalizedBlock";
+}
+
+/// Storage prefix for tracking sessions with GRANDPA stuck
+pub struct GrandpaStuckSessionsPrefix;
+impl StorageInstance for GrandpaStuckSessionsPrefix {
+    fn pallet_prefix() -> &'static str { "Session" }
+    const STORAGE_PREFIX: &'static str = "GrandpaStuckSessions";
 }
 
 /// Maps validator AccountId to the last session they produced a block
@@ -168,11 +200,37 @@ pub type ValidatorLastActive = frame_support::storage::types::StorageMap<
     frame_support::storage::types::OptionQuery,
 >;
 
-/// Permissionless validator set - discovers all registered validators
-/// and FILTERS OUT inactive ones automatically!
+/// Maps validator AccountId to the session they joined
+pub type ValidatorJoinedAt = frame_support::storage::types::StorageMap<
+    ValidatorJoinedAtPrefix,
+    frame_support::Blake2_128Concat,
+    AccountId,
+    u32,
+    frame_support::storage::types::OptionQuery,
+>;
+
+/// Stores the last finalized block number we observed
+pub type LastFinalizedBlock = frame_support::storage::types::StorageValue<
+    LastFinalizedBlockPrefix,
+    u32,
+    frame_support::storage::types::ValueQuery,
+>;
+
+/// Counts consecutive sessions where GRANDPA was stuck
+pub type GrandpaStuckSessions = frame_support::storage::types::StorageValue<
+    GrandpaStuckSessionsPrefix,
+    u32,
+    frame_support::storage::types::ValueQuery,
+>;
+
+/// Permissionless validator set with GRANDPA self-healing
 /// 
 /// Anyone can become a validator by calling session.setKeys()
-/// Validators who don't produce blocks for MAX_INACTIVE_SESSIONS are removed
+/// Validators are automatically removed if:
+/// 1. They don't produce blocks for MAX_INACTIVE_SESSIONS
+/// 2. GRANDPA is stuck and they are the newest non-essential validator
+/// 
+/// The network always maintains at least 2 validators for stability.
 pub struct PermissionlessValidatorSet;
 
 impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
@@ -183,7 +241,7 @@ impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
             new_index
         );
 
-        // Get current block author (if any) and mark them as active
+        // Get current block author and mark them as active
         if let Some(author) = pallet_authorship::Pallet::<Runtime>::author() {
             ValidatorLastActive::insert(&author, new_index);
             log::info!(
@@ -192,6 +250,37 @@ impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
                 author,
                 new_index
             );
+        }
+
+        // Check GRANDPA health - compare current block with finalized
+        let current_block = frame_system::Pallet::<Runtime>::block_number();
+        
+        // Get finalized block from storage (updated by GRANDPA)
+        let last_finalized = LastFinalizedBlock::get();
+        let grandpa_lag = current_block.saturating_sub(last_finalized);
+        
+        let grandpa_is_stuck = grandpa_lag > MAX_GRANDPA_LAG;
+        
+        if grandpa_is_stuck {
+            let stuck_count = GrandpaStuckSessions::get().saturating_add(1);
+            GrandpaStuckSessions::put(stuck_count);
+            log::warn!(
+                target: "runtime::session",
+                "⚠️ GRANDPA stuck! Lag: {} blocks, stuck for {} sessions",
+                grandpa_lag,
+                stuck_count
+            );
+        } else {
+            // Reset stuck counter if GRANDPA is healthy
+            if GrandpaStuckSessions::get() > 0 {
+                log::info!(
+                    target: "runtime::session",
+                    "✅ GRANDPA recovered! Resetting stuck counter."
+                );
+            }
+            GrandpaStuckSessions::put(0);
+            // Update last finalized block
+            LastFinalizedBlock::put(current_block);
         }
 
         // Collect all accounts that have registered session keys
@@ -207,53 +296,112 @@ impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
             return None;
         }
 
-        // Filter to only ACTIVE validators
-        let active_validators: Vec<AccountId> = all_registered
+        // Build list of validators with their join time
+        let mut validators_with_join_time: Vec<(AccountId, u32)> = all_registered
             .into_iter()
-            .filter(|account| {
-                match ValidatorLastActive::get(account) {
+            .filter_map(|account| {
+                // Check if validator is active (producing blocks)
+                match ValidatorLastActive::get(&account) {
                     Some(last_active) => {
                         let sessions_inactive = new_index.saturating_sub(last_active);
-                        if sessions_inactive <= MAX_INACTIVE_SESSIONS {
-                            true
-                        } else {
+                        if sessions_inactive > MAX_INACTIVE_SESSIONS {
                             log::warn!(
                                 target: "runtime::session",
-                                "🚫 Validator {:?} inactive for {} sessions, removing from set",
+                                "🚫 Validator {:?} inactive for {} sessions (no blocks), removing",
                                 account,
                                 sessions_inactive
                             );
-                            ValidatorLastActive::remove(account);
-                            false
+                            ValidatorLastActive::remove(&account);
+                            ValidatorJoinedAt::remove(&account);
+                            return None;
                         }
                     }
                     None => {
-                        ValidatorLastActive::insert(account, new_index);
+                        // New validator - record join time and mark active
+                        ValidatorLastActive::insert(&account, new_index);
+                        ValidatorJoinedAt::insert(&account, new_index);
                         log::info!(
                             target: "runtime::session",
-                            "🆕 New validator {:?} given {} sessions to produce blocks",
+                            "🆕 New validator {:?} joined at session {}",
                             account,
-                            MAX_INACTIVE_SESSIONS
+                            new_index
                         );
-                        true
                     }
                 }
+                
+                let joined = ValidatorJoinedAt::get(&account).unwrap_or(0);
+                Some((account, joined))
             })
+            .collect();
+
+        // Sort by join time (oldest first)
+        validators_with_join_time.sort_by(|a, b| a.1.cmp(&b.1));
+
+        // If GRANDPA is stuck for too long, remove newest validators
+        let stuck_sessions = GrandpaStuckSessions::get();
+        if grandpa_is_stuck && stuck_sessions >= 2 && validators_with_join_time.len() > 2 {
+            // Find the newest validator that has passed grace period
+            let validators_past_grace: Vec<&(AccountId, u32)> = validators_with_join_time
+                .iter()
+                .filter(|(_, joined)| new_index.saturating_sub(*joined) > GRANDPA_GRACE_SESSIONS)
+                .collect();
+            
+            if validators_past_grace.len() > 2 {
+                // Remove the newest one (last in sorted list that's past grace)
+                if let Some((newest_account, joined_at)) = validators_with_join_time
+                    .iter()
+                    .rev()
+                    .find(|(_, joined)| new_index.saturating_sub(*joined) > GRANDPA_GRACE_SESSIONS)
+                {
+                    log::warn!(
+                        target: "runtime::session",
+                        "🚫 GRANDPA stuck! Removing newest validator {:?} (joined session {})",
+                        newest_account,
+                        joined_at
+                    );
+                    
+                    ValidatorLastActive::remove(newest_account);
+                    ValidatorJoinedAt::remove(newest_account);
+                    
+                    // Remove from our list
+                    validators_with_join_time.retain(|(acc, _)| acc != newest_account);
+                    
+                    // Reset stuck counter to give network time to recover
+                    GrandpaStuckSessions::put(0);
+                }
+            }
+        }
+
+        // Extract just the account IDs
+        let active_validators: Vec<AccountId> = validators_with_join_time
+            .into_iter()
+            .map(|(account, _)| account)
             .collect();
 
         if active_validators.is_empty() {
             log::error!(
                 target: "runtime::session",
-                "❌ No active validators! This should never happen. Keeping current set."
+                "❌ No active validators! Keeping current set."
+            );
+            return None;
+        }
+
+        // Safety: always keep at least 2 validators
+        if active_validators.len() < 2 {
+            log::warn!(
+                target: "runtime::session",
+                "⚠️ Only {} validator(s), need at least 2. Keeping current set.",
+                active_validators.len()
             );
             return None;
         }
 
         log::info!(
             target: "runtime::session",
-            "✅ Session {}: {} active validator(s)",
+            "✅ Session {}: {} active validator(s), GRANDPA lag: {} blocks",
             new_index,
-            active_validators.len()
+            active_validators.len(),
+            grandpa_lag
         );
 
         Some(active_validators)
