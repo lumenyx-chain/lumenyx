@@ -2,6 +2,9 @@
 //!
 //! Sets up the full node with both Substrate and Ethereum RPC support.
 //! This enables MetaMask and all Ethereum-compatible tools.
+//!
+//! NO GRANDPA = UNSTOPPABLE like Bitcoin!
+//! Finality is probabilistic (6 blocks = ~18 seconds)
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
@@ -9,13 +12,11 @@ use futures::prelude::*;
 use lumenyx_runtime::{self, opaque::Block, RuntimeApi};
 use sc_client_api::{Backend, BlockBackend, BlockchainEvents};
 use sc_consensus_aura::{ImportQueueParams, SlotProportion, StartAuraParams};
-use sc_consensus_grandpa::SharedVoterState;
 use sc_executor::WasmExecutor;
 use sc_service::{
     error::Error as ServiceError, Configuration, TaskManager, TFullBackend, TFullClient,
 };
 use sc_telemetry::{Telemetry, TelemetryWorker};
-use sc_transaction_pool_api::OffchainTransactionPoolFactory;
 use sp_consensus_aura::sr25519::AuthorityPair as AuraPair;
 
 // Frontier imports
@@ -33,8 +34,8 @@ pub fn db_config_dir(config: &Configuration) -> std::path::PathBuf {
 pub type FullClient = TFullClient<Block, RuntimeApi, WasmExecutor<sp_io::SubstrateHostFunctions>>;
 type FullBackend = TFullBackend<Block>;
 type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
-type GrandpaBlockImport = sc_consensus_grandpa::GrandpaBlockImport<FullBackend, Block, FullClient, FullSelectChain>;
-type GrandpaLinkHalf = sc_consensus_grandpa::LinkHalf<Block, FullClient, FullSelectChain>;
+
+// NO GRANDPA types needed!
 
 /// Frontier backend type
 pub type FrontierBackend = fc_db::Backend<Block, FullClient>;
@@ -45,6 +46,9 @@ pub struct FrontierPartialComponents {
     pub fee_history_cache: FeeHistoryCache,
     pub fee_history_cache_limit: FeeHistoryCacheLimit,
 }
+
+/// Block import type - just AURA, no GRANDPA wrapper
+type AuraBlockImport = sc_consensus_aura::AuraBlockImport<Block, FullClient, FullClient, FullSelectChain>;
 
 /// Create partial components for the LUMENYX node
 pub fn new_partial(
@@ -57,8 +61,7 @@ pub fn new_partial(
         sc_consensus::DefaultImportQueue<Block>,
         sc_transaction_pool::FullPool<Block, FullClient>,
         (
-            GrandpaBlockImport,
-            GrandpaLinkHalf,
+            AuraBlockImport,
             Option<Telemetry>,
             Arc<FrontierBackend>,
             FrontierPartialComponents,
@@ -101,19 +104,17 @@ pub fn new_partial(
         client.clone(),
     );
 
-    let (grandpa_block_import, grandpa_link) = sc_consensus_grandpa::block_import(
+    // NO GRANDPA block import - just AURA!
+    let block_import = sc_consensus_aura::AuraBlockImport::new(
         client.clone(),
-        512,
-        &client,
-        select_chain.clone(),
-        telemetry.as_ref().map(|x| x.handle()),
-    )?;
+        client.clone(),
+    );
 
     let slot_duration = sc_consensus_aura::slot_duration(&*client)?;
 
     let import_queue = sc_consensus_aura::import_queue::<AuraPair, _, _, _, _, _>(ImportQueueParams {
-        block_import: grandpa_block_import.clone(),
-        justification_import: Some(Box::new(grandpa_block_import.clone())),
+        block_import: block_import.clone(),
+        justification_import: None,  // NO GRANDPA justifications!
         client: client.clone(),
         create_inherent_data_providers: move |_, ()| async move {
             let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
@@ -160,11 +161,12 @@ pub fn new_partial(
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (grandpa_block_import, grandpa_link, telemetry, frontier_backend, frontier_partial),
+        other: (block_import, telemetry, frontier_backend, frontier_partial),
     })
 }
 
 /// Build the full LUMENYX node with Ethereum RPC support
+/// NO GRANDPA = Network NEVER stops!
 pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     let sc_service::PartialComponents {
         client,
@@ -174,7 +176,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (block_import, grandpa_link, mut telemetry, frontier_backend, frontier_partial),
+        other: (block_import, mut telemetry, frontier_backend, frontier_partial),
     } = new_partial(&config)?;
 
     let FrontierPartialComponents {
@@ -189,24 +191,9 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         sc_network::NetworkWorker<Block, <Block as sp_runtime::traits::Block>::Hash>,
     >::new(&config.network, config.prometheus_registry().cloned());
 
-    let genesis_hash = client.block_hash(0).ok().flatten().expect("Genesis block exists");
-    let grandpa_protocol_name = sc_consensus_grandpa::protocol_standard_name(&genesis_hash, &config.chain_spec);
-
     let metrics = sc_network::NotificationMetrics::new(config.prometheus_registry());
-    let peer_store = sc_network::peer_store::PeerStore::new(vec![], None);
 
-    let (grandpa_protocol_config, grandpa_notification_service) =
-        sc_consensus_grandpa::grandpa_peers_set_config::<
-            Block,
-            sc_network::NetworkWorker<Block, <Block as sp_runtime::traits::Block>::Hash>,
-        >(grandpa_protocol_name.clone(), metrics.clone(), Arc::new(peer_store.handle()));
-    net_config.add_notification_protocol(grandpa_protocol_config);
-
-    let warp_sync = Arc::new(sc_consensus_grandpa::warp_proof::NetworkProvider::new(
-        backend.clone(),
-        grandpa_link.shared_authority_set().clone(),
-        Vec::default(),
-    ));
+    // NO GRANDPA protocol needed!
 
     let (network, system_rpc_tx, tx_handler_controller, network_starter, sync_service) =
         sc_service::build_network(sc_service::BuildNetworkParams {
@@ -217,15 +204,13 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             spawn_handle: task_manager.spawn_handle(),
             import_queue,
             block_announce_validator_builder: None,
-            warp_sync_config: Some(sc_service::WarpSyncConfig::WithProvider(warp_sync)),
+            warp_sync_config: None,  // NO warp sync without GRANDPA
             block_relay: None,
             metrics,
         })?;
 
     let role = config.role;
     let force_authoring = config.force_authoring;
-    let name = config.network.node_name.clone();
-    let enable_grandpa = !config.disable_grandpa;
     let prometheus_registry = config.prometheus_registry().cloned();
 
     // ============================================
@@ -398,40 +383,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         )?;
 
         task_manager.spawn_essential_handle().spawn_blocking("aura", Some("block-authoring"), aura);
+        
+        log::info!("🚀 LUMENYX Validator started - UNSTOPPABLE like Bitcoin!");
     }
 
-    // Start GRANDPA voter
-    if enable_grandpa {
-        let grandpa_config = sc_consensus_grandpa::Config {
-            gossip_duration: Duration::from_millis(333),
-            justification_generation_period: 512,
-            name: Some(name),
-            observer_enabled: false,
-            keystore: Some(keystore_container.keystore()),
-            local_role: role,
-            telemetry: telemetry.as_ref().map(|x| x.handle()),
-            protocol_name: grandpa_protocol_name,
-        };
-
-        let grandpa_params = sc_consensus_grandpa::GrandpaParams {
-            config: grandpa_config,
-            link: grandpa_link,
-            network,
-            sync: sync_service,
-            notification_service: grandpa_notification_service,
-            voting_rule: sc_consensus_grandpa::VotingRulesBuilder::default().build(),
-            prometheus_registry,
-            shared_voter_state: SharedVoterState::empty(),
-            telemetry: telemetry.as_ref().map(|x| x.handle()),
-            offchain_tx_pool_factory: OffchainTransactionPoolFactory::new(transaction_pool),
-        };
-
-        task_manager.spawn_essential_handle().spawn_blocking(
-            "grandpa-voter",
-            None,
-            sc_consensus_grandpa::run_grandpa_voter(grandpa_params)?,
-        );
-    }
+    // NO GRANDPA voter! Network never stops.
+    log::info!("✅ LUMENYX Node running WITHOUT GRANDPA - probabilistic finality (6 blocks = 18 sec)");
 
     network_starter.start_network();
     Ok(task_manager)
