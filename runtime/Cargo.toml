@@ -17,7 +17,7 @@ hex-literal = "0.4"
 sp-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-block-builder = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-consensus-aura = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
-sp-consensus-grandpa = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
+# NO sp-consensus-grandpa - UNSTOPPABLE like Bitcoin!
 sp-core = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-inherents = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-offchain = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
@@ -38,7 +38,7 @@ frame-executive = { git = "https://github.com/paritytech/polkadot-sdk", branch =
 
 # Pallets
 pallet-aura = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
-pallet-grandpa = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
+# NO pallet-grandpa - UNSTOPPABLE like Bitcoin!
 pallet-balances = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 pallet-timestamp = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 pallet-transaction-payment = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
@@ -77,7 +77,7 @@ std = [
     "sp-api/std",
     "sp-block-builder/std",
     "sp-consensus-aura/std",
-    "sp-consensus-grandpa/std",
+    # NO sp-consensus-grandpa/std
     "sp-core/std",
     "sp-inherents/std",
     "sp-offchain/std",
@@ -94,7 +94,7 @@ std = [
     "frame-system-rpc-runtime-api/std",
     "frame-executive/std",
     "pallet-aura/std",
-    "pallet-grandpa/std",
+    # NO pallet-grandpa/std
     "pallet-balances/std",
     "pallet-timestamp/std",
     "pallet-transaction-payment/std",
@@ -120,4 +120,3 @@ std = [
     "pallet-validator-faucet/std",
     "substrate-wasm-builder",
 ]
-
