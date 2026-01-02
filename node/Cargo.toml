@@ -21,7 +21,7 @@ sc-network = { git = "https://github.com/paritytech/polkadot-sdk", branch = "sta
 sc-network-sync = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sc-consensus = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sc-consensus-aura = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
-sc-consensus-grandpa = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+# NO sc-consensus-grandpa - UNSTOPPABLE like Bitcoin!
 sc-client-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sc-rpc = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sc-rpc-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
@@ -39,7 +39,7 @@ sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", branch = "sta
 sp-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sp-consensus = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sp-consensus-aura = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
-sp-consensus-grandpa = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+# NO sp-consensus-grandpa - UNSTOPPABLE like Bitcoin!
 sp-keyring = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sp-timestamp = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sp-blockchain = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
