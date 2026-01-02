@@ -49,73 +49,56 @@ cd lumenyx
 cargo build --release
 
 # Run as full node
-./target/release/lumenyx-node --chain mainnet-spec.json --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWSnyAJBQoKRQL3SWgYu5LKqEsAYfN5JWtzoc2NKgGb5ZJ
+./target/release/lumenyx-node --chain mainnet --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWSnyAJBQoKRQL3SWgYu5LKqEsAYfN5JWtzoc2NKgGb5ZJ
 
 # Run as validator
-./target/release/lumenyx-node --chain mainnet-spec.json --validator --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWSnyAJBQoKRQL3SWgYu5LKqEsAYfN5JWtzoc2NKgGb5ZJ
+./target/release/lumenyx-node --chain mainnet --validator --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWSnyAJBQoKRQL3SWgYu5LKqEsAYfN5JWtzoc2NKgGb5ZJ
 ```
 
 ## Become a Validator (Permissionless)
 
 Anyone can become a validator without permission or contact.
 
-### Step 1: Generate Keys
+### Step 1: Generate Key
 ```bash
 # Generate AURA key (block production)
 ./target/release/lumenyx-node key generate --scheme sr25519
 
-# Generate GRANDPA key (finalization)
-./target/release/lumenyx-node key generate --scheme ed25519
-
-# Save both secret phrases securely
+# Save the secret phrase securely
 ```
 
 ### Step 2: Claim Free LUMENYX
 
 The validator faucet provides **2 LUMENYX for free** to cover registration fees.
-
-**Option A: Automatic (Recommended)**
 ```bash
-pip install base58 substrate-interface
-python3 scripts/claim_faucet.py
+pip install substrate-interface
+python3 scripts/become_validator.py
 ```
-This generates a new account, calculates PoW, and claims automatically.
 
-**Option B: Manual**
-```bash
-# Calculate PoW for your existing address
-pip install base58
-python3 scripts/faucet_pow.py YOUR_ADDRESS
-```
-Then submit via substrate-interface or Polkadot.js Apps.
+This script generates a new account, calculates PoW, and claims automatically.
 
 **Details:**
 - Requires proof-of-work (~2 seconds to compute)
 - One claim per account
 - Pool: 5000 LUMENYX total
 
-### Step 3: Register Your Keys
+### Step 3: Register Your Key
 ```bash
 # Insert AURA key
-./target/release/lumenyx-node key insert --chain mainnet-spec.json \
+./target/release/lumenyx-node key insert --chain mainnet \
   --scheme sr25519 --key-type aura \
-  --suri "your twelve word secret phrase"
-
-# Insert GRANDPA key
-./target/release/lumenyx-node key insert --chain mainnet-spec.json \
-  --scheme ed25519 --key-type gran \
   --suri "your twelve word secret phrase"
 ```
 
 ### Step 4: Set Session Keys
 
 Using Polkadot.js Apps:
-1. Call `session.setKeys(keys, proof)` with your AURA + GRANDPA public keys
+1. Call `session.setKeys(keys, proof)` with your AURA public key
 2. Costs ~0.001 LUMENYX (paid from faucet claim)
 
 ### Step 5: Start Validating
 ```bash
-./target/release/lumenyx-node --chain mainnet-spec.json --validator --name "your-name" --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWSnyAJBQoKRQL3SWgYu5LKqEsAYfN5JWtzoc2NKgGb5ZJ
+./target/release/lumenyx-node --chain mainnet --validator --name "your-name" --bootnodes /ip4/89.147.111.102/tcp/30333/p2p/12D3KooWSnyAJBQoKRQL3SWgYu5LKqEsAYfN5JWtzoc2NKgGb5ZJ
 ```
 
 Your node will start producing blocks in the next era (~1 hour).
@@ -123,7 +106,8 @@ No permission needed. No contact required.
 
 ## Technical Details
 
-- **Consensus:** AURA (block production) + GRANDPA (finality)
+- **Consensus:** AURA (block production) with probabilistic finality
+- **Finality:** ~18 seconds (6 blocks) - like Bitcoin
 - **Block time:** 3 seconds
 - **Chain ID:** 7777
 - **Framework:** Substrate + Frontier EVM
