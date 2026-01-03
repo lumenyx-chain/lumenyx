@@ -67,6 +67,18 @@ pub fn new_partial(
     >,
     ServiceError,
 > {
+    // FIX: Create network directory and generate node key if not exists
+    let network_path = config.network.net_config_path.clone()
+        .unwrap_or_else(|| config.base_path.config_dir(config.chain_spec.id()))
+        .join("network");
+    let _ = std::fs::create_dir_all(&network_path);
+    let secret_key_path = network_path.join("secret_ed25519");
+    if !secret_key_path.exists() {
+        use sp_core::Pair;
+        let keypair = sp_core::ed25519::Pair::generate().0;
+        let _ = std::fs::write(&secret_key_path, keypair.to_raw_vec());
+    }
+
     let telemetry = config
         .telemetry_endpoints
         .clone()
