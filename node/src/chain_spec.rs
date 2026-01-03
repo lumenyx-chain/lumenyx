@@ -207,11 +207,11 @@ pub fn mainnet_config() -> Result<ChainSpec, String> {
         (
             // Account ID (same as AURA)
             AccountId::from(
-                sp_core::sr25519::Public::from_ss58check("5Fe12bNT7xmTzoi46CoYgFPZccskFTgx2CN7S48deyHvZXPs")
+                sp_core::sr25519::Public::from_ss58check("5D5WJYmpjuPoQR52N1DkbyNBNkp6pz1YtjhJswEm2pSHggF7")
                     .expect("Valid SS58 address")
             ),
             // AURA key (sr25519) - block production
-            AuraId::from_ss58check("5Fe12bNT7xmTzoi46CoYgFPZccskFTgx2CN7S48deyHvZXPs")
+            AuraId::from_ss58check("5D5WJYmpjuPoQR52N1DkbyNBNkp6pz1YtjhJswEm2pSHggF7")
                 .expect("Valid SS58 address"),
             // NO GRANDPA KEY NEEDED!
         ),
