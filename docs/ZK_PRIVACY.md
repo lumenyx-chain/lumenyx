@@ -114,15 +114,21 @@ cargo build --release
     --pk-output proving_key.bin
 ```
 
-### 2. Deploy Verification Key
+### 2. Verification Key (Pre-deployed)
 
-```javascript
-// Via Polkadot.js
-const vkHex = '0x' + fs.readFileSync('verification_key.bin').toString('hex');
-await api.tx.sudo.sudo(
-    api.tx.privacy.setVerificationKey(vkHex)
-).signAndSend(sudoAccount);
+The verification key is **hardcoded in the runtime** - no admin action needed!
+
+LUMENYX has no sudo/admin keys by design. The ZK verification key (360 bytes) is 
+embedded directly in the privacy pallet, enabling trustless privacy from day one.
+
+To verify the key is active, test the ZK system locally:
+```bash
+cd tools/zk-cli
+cargo build --release
+./target/release/lumenyx-zk test
 ```
+
+If you see "ALL TESTS PASSED" - privacy is working!
 
 ### 3. Shield Funds
 

@@ -66,6 +66,9 @@ git clone https://github.com/lumenyx-chain/lumenyx
 cd lumenyx
 cargo build --release
 
+# Create data directory (fixes NetworkKeyNotFound error)
+mkdir -p ~/.local/share/lumenyx-node/chains/lumenyx_mainnet/network
+
 # Start as validator (keep this running!)
 ./target/release/lumenyx-node \
   --chain mainnet \
