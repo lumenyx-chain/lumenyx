@@ -799,3 +799,39 @@ pub fn verify_transfer_proof(
     
     verify_groth16(&vk, &proof, &inputs)
 }
+
+// ==================== POSEIDON HASH ====================
+
+/// Poseidon-like hash (MiMC-style) for ZK compatibility
+/// Must match the off-chain implementation in lumenyx-zk CLI
+pub fn poseidon_hash(inputs: &[Fp]) -> Fp {
+    let mut state = Fp::from_bytes(&[0u8; 32]).unwrap();
+    for (i, input) in inputs.iter().enumerate() {
+        state = state.add(input);
+        let x2 = state.square();
+        let x4 = x2.square();
+        state = x4.mul(&state); // x^5
+        // Add round constant (i + 1)
+        let mut rc_bytes = [0u8; 32];
+        rc_bytes[31] = (i + 1) as u8;
+        if let Some(rc) = Fp::from_bytes(&rc_bytes) {
+            state = state.add(&rc);
+        }
+    }
+    state
+}
+
+/// Hash two field elements for Merkle tree
+pub fn poseidon_hash_pair(left: Fp, right: Fp) -> Fp {
+    poseidon_hash(&[left, right])
+}
+
+/// Convert H256 to Fp for hashing
+pub fn h256_to_fp(h: H256) -> Option<Fp> {
+    Fp::from_bytes(&h.0)
+}
+
+/// Convert Fp to H256 for storage
+pub fn fp_to_h256(f: &Fp) -> H256 {
+    H256::from_slice(&f.to_bytes())
+}
