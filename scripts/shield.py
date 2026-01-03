@@ -4,7 +4,7 @@ LUMENYX - Shield Funds (Deposit to Private Pool)
 
 This script:
 1. Generates secret and blinding factors
-2. Computes commitment
+2. Computes commitment using Blake2
 3. Submits shield transaction
 4. Saves note data for later unshield
 
@@ -29,125 +29,119 @@ MAINNET = "ws://89.147.111.102:9944"
 LOCAL = "ws://127.0.0.1:9944"
 NOTES_DIR = Path.home() / ".lumenyx-notes"
 
-def poseidon_hash(inputs: list[int]) -> int:
-    """Poseidon-like hash matching on-chain implementation"""
-    # BN254 field modulus
-    P = 21888242871839275222246405745257275088548364400416034343698204186575808495617
-    
-    state = 0
-    for i, inp in enumerate(inputs):
-        state = (state + inp) % P
-        x2 = (state * state) % P
-        x4 = (x2 * x2) % P
-        state = (x4 * state) % P  # x^5
-        state = (state + (i + 1)) % P
-    return state
+def blake2_hash(data: bytes) -> bytes:
+    """Blake2b-256 hash matching on-chain implementation"""
+    return hashlib.blake2b(data, digest_size=32).digest()
 
-def compute_commitment(amount: int, secret: int, blinding: int) -> int:
-    """Compute commitment = PoseidonHash(amount, secret, blinding)"""
-    return poseidon_hash([amount, secret, blinding])
+def hash_pair(left: bytes, right: bytes) -> bytes:
+    """Hash two 32-byte values for Merkle tree"""
+    return blake2_hash(left + right)
 
-def int_to_h256(value: int) -> str:
-    """Convert integer to 0x-prefixed 32-byte hex"""
-    return "0x" + value.to_bytes(32, 'big').hex()
+def compute_commitment(amount: int, secret: bytes, blinding: bytes) -> bytes:
+    """Compute commitment = Blake2(amount || secret || blinding)"""
+    amount_bytes = amount.to_bytes(16, 'little')
+    data = amount_bytes + secret + blinding
+    return blake2_hash(data)
+
+def compute_nullifier(commitment: bytes, secret: bytes) -> bytes:
+    """Compute nullifier = Blake2(commitment || secret)"""
+    return blake2_hash(commitment + secret)
+
+def bytes_to_hex(b: bytes) -> str:
+    """Convert bytes to 0x-prefixed hex"""
+    return "0x" + b.hex()
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Shield LUMENYX funds")
-    parser.add_argument("--amount", type=int, required=True, help="Amount to shield")
+    parser.add_argument("--amount", type=int, required=True, help="Amount to shield (in LUMENYX)")
     parser.add_argument("--seed", type=str, required=True, help="Your seed phrase")
     parser.add_argument("--local", action="store_true", help="Use local node")
     args = parser.parse_args()
 
     print("=" * 60)
-    print("  LUMENYX - SHIELD FUNDS")
+    print("  LUMENYX - SHIELD FUNDS (Blake2)")
     print("=" * 60)
-    
+
     # Connect
     url = LOCAL if args.local else MAINNET
     print(f"\n🔌 Connecting to {url}...")
     substrate = SubstrateInterface(url=url)
-    
+
     # Load keypair
     keypair = Keypair.create_from_mnemonic(args.seed)
     print(f"📍 Account: {keypair.ss58_address}")
-    
+
     # Check balance
     account = substrate.query("System", "Account", [keypair.ss58_address])
     balance = account.value["data"]["free"] / 10**12
     print(f"💰 Balance: {balance} LUMENYX")
-    
+
+    amount_planck = args.amount * 10**12
+
     if balance < args.amount:
-        print(f"❌ Insufficient balance!")
+        print(f"❌ Insufficient balance! Need {args.amount}, have {balance}")
         sys.exit(1)
-    
-    # Generate secret and blinding
-    P = 21888242871839275222246405745257275088548364400416034343698204186575808495617
-    secret = secrets.randbelow(P)
-    blinding = secrets.randbelow(P)
-    
+
+    # Generate secrets (32 bytes each)
+    secret = secrets.token_bytes(32)
+    blinding = secrets.token_bytes(32)
+
+    print(f"\n🔐 Generated secrets (SAVE THESE!):")
+    print(f"   Secret: {secret.hex()}")
+    print(f"   Blinding: {blinding.hex()}")
+
     # Compute commitment
-    amount_scaled = args.amount * 10**12  # Convert to smallest unit
-    commitment = compute_commitment(amount_scaled, secret, blinding)
-    commitment_hex = int_to_h256(commitment)
-    
-    print(f"\n🔐 Secret: {hex(secret)}")
-    print(f"🎲 Blinding: {hex(blinding)}")
-    print(f"📦 Commitment: {commitment_hex}")
-    
-    # Get current leaf index (for saving)
-    next_index = substrate.query("Privacy", "NextIndex")
-    leaf_index = next_index.value
-    
-    # Submit shield transaction
+    commitment = compute_commitment(amount_planck, secret, blinding)
+    print(f"\n📦 Commitment: {bytes_to_hex(commitment)}")
+
+    # Create and submit transaction
     print(f"\n📤 Submitting shield transaction...")
     
     call = substrate.compose_call(
-        call_module='Privacy',
-        call_function='shield',
+        call_module="Privacy",
+        call_function="shield",
         call_params={
-            'amount': amount_scaled,
-            'commitment': commitment_hex
+            "amount": amount_planck,
+            "commitment": bytes_to_hex(commitment),
         }
     )
-    
+
     extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
-    
-    try:
-        receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
-        if receipt.is_success:
-            print(f"✅ Shield successful! Block: {receipt.block_hash[:18]}...")
-        else:
-            print(f"❌ Failed: {receipt.error_message}")
-            sys.exit(1)
-    except Exception as e:
-        print(f"❌ Transaction failed: {e}")
+    receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+
+    if receipt.is_success:
+        print(f"✅ Shield successful!")
+        print(f"   Block: {receipt.block_hash}")
+
+        # Get leaf index from events
+        leaf_index = None
+        for event in receipt.triggered_events:
+            if event.value["event_id"] == "Shielded":
+                leaf_index = event.value["attributes"].get("leaf_index", 0)
+                break
+
+        # Save note
+        NOTES_DIR.mkdir(exist_ok=True)
+        note = {
+            "amount": amount_planck,
+            "secret": secret.hex(),
+            "blinding": blinding.hex(),
+            "commitment": commitment.hex(),
+            "leaf_index": leaf_index,
+            "nullifier": compute_nullifier(commitment, secret).hex(),
+        }
+
+        note_file = NOTES_DIR / f"note_{leaf_index}.json"
+        with open(note_file, 'w') as f:
+            json.dump(note, f, indent=2)
+
+        print(f"\n💾 Note saved to: {note_file}")
+        print(f"\n⚠️  IMPORTANT: Keep your note file safe!")
+        print(f"   You need it to unshield your funds.")
+    else:
+        print(f"❌ Shield failed: {receipt.error_message}")
         sys.exit(1)
-    
-    # Save note data
-    NOTES_DIR.mkdir(exist_ok=True)
-    note_file = NOTES_DIR / f"note_{leaf_index}.json"
-    
-    note_data = {
-        "leaf_index": leaf_index,
-        "amount": args.amount,
-        "amount_scaled": amount_scaled,
-        "secret": hex(secret),
-        "blinding": hex(blinding),
-        "commitment": commitment_hex,
-        "block_hash": receipt.block_hash
-    }
-    
-    with open(note_file, 'w') as f:
-        json.dump(note_data, f, indent=2)
-    
-    print(f"\n💾 Note saved to: {note_file}")
-    print(f"\n⚠️  SAVE YOUR SECRET AND BLINDING!")
-    print(f"    Without them, funds are LOST FOREVER!")
-    
-    print("\n" + "=" * 60)
-    print("  ✅ SHIELD COMPLETE!")
-    print("=" * 60)
 
 if __name__ == "__main__":
     main()

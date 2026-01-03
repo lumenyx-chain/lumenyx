@@ -835,3 +835,15 @@ pub fn h256_to_fp(h: H256) -> Option<Fp> {
 pub fn fp_to_h256(f: &Fp) -> H256 {
     H256::from_slice(&f.to_bytes())
 }
+
+// ==================== BLAKE2 HASH (for Merkle tree) ====================
+/// Alias for verify_unshield_proof (called from zk.rs)
+pub fn verify_groth16_proof(
+    vk_bytes: &[u8],
+    proof_bytes: &[u8],
+    nullifier: H256,
+    root: H256,
+    amount: u128,
+) -> bool {
+    verify_unshield_proof(vk_bytes, proof_bytes, nullifier, root, amount)
+}
