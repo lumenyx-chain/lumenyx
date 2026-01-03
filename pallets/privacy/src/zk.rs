@@ -1,42 +1,44 @@
 //! ZK Cryptographic Primitives for LUMENYX Privacy
 //!
-//! Full BN254 pairing-based Groth16 verification on-chain.
-//! Proof generation happens off-chain using the lumenyx-zk CLI tool.
+//! Uses Blake2b for Merkle tree (simple, fast, secure)
+//! Groth16 verification for ZK proofs
 
 use sp_core::H256;
-use crate::bn254::{Fp, poseidon_hash_pair, h256_to_fp, fp_to_h256};
+use sp_io::hashing::blake2_256;
 
-/// Hash two H256 values together using Poseidon (for Merkle tree)
-/// This MUST match the off-chain CLI implementation
+/// Hash two H256 values together using Blake2 (for Merkle tree)
+/// This MUST match the off-chain Python implementation
 pub fn hash_pair(left: H256, right: H256) -> H256 {
-    let left_fp = match h256_to_fp(left) {
-        Some(f) => f,
-        None => return H256::zero(),
-    };
-    let right_fp = match h256_to_fp(right) {
-        Some(f) => f,
-        None => return H256::zero(),
-    };
-    let result = poseidon_hash_pair(left_fp, right_fp);
-    fp_to_h256(&result)
+    let mut data = [0u8; 64];
+    data[..32].copy_from_slice(left.as_bytes());
+    data[32..].copy_from_slice(right.as_bytes());
+    H256::from(blake2_256(&data))
 }
 
-/// Groth16 ZK Proof Verifier with FULL BN254 Pairing
+/// Hash inputs for commitment: Blake2(amount || secret || blinding)
+pub fn hash_commitment(amount: u128, secret: H256, blinding: H256) -> H256 {
+    let mut data = [0u8; 80]; // 16 + 32 + 32
+    data[..16].copy_from_slice(&amount.to_le_bytes());
+    data[16..48].copy_from_slice(secret.as_bytes());
+    data[48..80].copy_from_slice(blinding.as_bytes());
+    H256::from(blake2_256(&data))
+}
+
+/// Hash for nullifier: Blake2(commitment || secret)
+pub fn hash_nullifier(commitment: H256, secret: H256) -> H256 {
+    let mut data = [0u8; 64];
+    data[..32].copy_from_slice(commitment.as_bytes());
+    data[32..].copy_from_slice(secret.as_bytes());
+    H256::from(blake2_256(&data))
+}
+
+/// Groth16 ZK Proof Verifier
 ///
-/// This is a REAL cryptographic verifier that performs:
-/// 1. Elliptic curve point parsing and validation
-/// 2. BN254 optimal ate pairing computation
-/// 3. Groth16 verification equation check
-///
-/// Security: Mathematically proves knowledge of secret without revealing it
+/// Verifies zero-knowledge proofs for private transactions
 pub struct Groth16Verifier;
 
 impl Groth16Verifier {
-    /// Verify unshield proof using full BN254 pairing
-    ///
-    /// Verifies: e(A, B) = e(α, β) · e(L, γ) · e(C, δ)
-    ///
-    /// This is REAL cryptographic verification - fake proofs will be REJECTED.
+    /// Verify unshield proof
     pub fn verify_unshield(
         vk_bytes: &[u8],
         proof_bytes: &[u8],
@@ -44,15 +46,26 @@ impl Groth16Verifier {
         root: H256,
         amount: u128,
     ) -> bool {
-        // Structural validation first (fast reject)
-        if vk_bytes.len() < 512 || proof_bytes.len() < 256 {
+        // Structural validation
+        if vk_bytes.len() < 256 || proof_bytes.len() < 128 {
             return false;
         }
-        // FULL CRYPTOGRAPHIC VERIFICATION using BN254 pairing
-        crate::bn254::verify_unshield_proof(vk_bytes, proof_bytes, nullifier, root, amount)
+
+        // Verify nullifier and root are non-zero
+        if nullifier == H256::zero() || root == H256::zero() {
+            return false;
+        }
+
+        // Verify amount is reasonable
+        if amount == 0 || amount > 21_000_000_000_000_000_000 {
+            return false;
+        }
+
+        // Call full BN254 verification
+        crate::bn254::verify_groth16_proof(vk_bytes, proof_bytes, nullifier, root, amount)
     }
 
-    /// Verify shielded transfer proof using full BN254 pairing
+    /// Verify shielded transfer proof
     pub fn verify_transfer(
         vk_bytes: &[u8],
         proof_bytes: &[u8],
@@ -61,9 +74,22 @@ impl Groth16Verifier {
         root: H256,
         amount: u128,
     ) -> bool {
-        if vk_bytes.len() < 512 || proof_bytes.len() < 256 {
+        // Structural validation
+        if vk_bytes.len() < 256 || proof_bytes.len() < 128 {
             return false;
         }
+
+        // Verify inputs are non-zero
+        if nullifier == H256::zero() || root == H256::zero() || new_commitment == H256::zero() {
+            return false;
+        }
+
+        // Verify amount is reasonable
+        if amount == 0 || amount > 21_000_000_000_000_000_000 {
+            return false;
+        }
+
+        // Call full BN254 verification
         crate::bn254::verify_transfer_proof(vk_bytes, proof_bytes, nullifier, new_commitment, root, amount)
     }
 }
