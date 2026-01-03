@@ -48,11 +48,10 @@ def print_banner():
     print("  • Network NEVER stops")
 
 
-def calculate_pow(address: str, difficulty: int) -> int:
-    """Calculate Proof-of-Work nonce for faucet claim"""
+def calculate_pow(address_bytes: bytes, difficulty: int):
+    """Calculate Proof-of-Work nonce and hash for faucet claim"""
     target = 1 << (256 - difficulty)
     nonce = 0
-    address_bytes = bytes.fromhex(address[2:]) if address.startswith("0x") else address.encode()
     
     while True:
         data = address_bytes + nonce.to_bytes(8, 'little')
@@ -60,7 +59,7 @@ def calculate_pow(address: str, difficulty: int) -> int:
         hash_int = int.from_bytes(hash_result, 'big')
         
         if hash_int < target:
-            return nonce
+            return nonce, "0x" + hash_result.hex()
         nonce += 1
         
         if nonce % 100000 == 0:
@@ -119,22 +118,27 @@ def main():
     print("   This may take 5-30 seconds...")
     
     start_time = time.time()
-    account_hex = "0x" + keypair.public_key.hex()
-    nonce = calculate_pow(account_hex, POW_DIFFICULTY)
+    address_bytes = bytes(keypair.public_key)
+    nonce, pow_hash = calculate_pow(address_bytes, POW_DIFFICULTY)
     elapsed = time.time() - start_time
     
     print(f"   ✅ PoW found in {elapsed:.1f} seconds (nonce: {nonce})")
     
-    # Submit faucet claim
+    # Submit faucet claim (unsigned extrinsic)
     print("   📤 Submitting claim transaction...")
     
     call = substrate.compose_call(
         call_module='ValidatorFaucet',
-        call_function='claim',
-        call_params={'nonce': nonce}
+        call_function='claim_for_validator',
+        call_params={
+            'target': keypair.ss58_address,
+            'nonce': nonce,
+            'pow_hash': pow_hash
+        }
     )
     
-    extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
+    # Create unsigned extrinsic
+    extrinsic = substrate.create_unsigned_extrinsic(call=call)
     
     try:
         receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
@@ -144,12 +148,14 @@ def main():
         print("   ⚠️  You may have already claimed or faucet is empty")
     
     # Check balance
+    time.sleep(3)  # Wait for block
     account_info = substrate.query("System", "Account", [keypair.ss58_address])
     balance = account_info.value["data"]["free"] / 10**12
     print(f"   💰 Balance: {balance} LUMENYX")
     
     if balance < 1:
-        print("   ⚠️  Low balance - you may need to get more LUMENYX")
+        print("   ⚠️  Low balance - claim may have failed")
+        return False
     
     # Setup session keys - USE SAME SEED for AURA!
     print("\n🔐 Setting up session keys...")
@@ -176,7 +182,7 @@ def main():
         result = substrate.rpc_request("author_insertKey", [
             "aura",  # key type
             keypair.mnemonic,  # seed phrase
-            keypair.public_key.hex()  # public key
+            "0x" + keypair.public_key.hex()  # public key
         ])
         print(f"   ✅ AURA key inserted into keystore")
     except Exception as e:
