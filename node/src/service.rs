@@ -170,7 +170,14 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
             return Ok(genesis_data);
         }
 
-        // Find selected parent (highest blue_work)
+        // CRITICAL FIX (as per ChatGPT/Grok advice):
+        // Verify the primary parent exists in our GHOSTDAG store
+        // If not, return UnknownParent error - Substrate sync will request it
+        if self.ghostdag_store.get_ghostdag_data(&parent_hash).is_none() {
+            return Err(format!("UnknownParent: {:?} not in GHOSTDAG store", parent_hash));
+        }
+
+        // Find selected parent (highest blue_work) - only from parents we HAVE
         let selected_parent = all_parents.iter()
             .filter_map(|p| {
                 self.ghostdag_store.get_ghostdag_data(p).map(|d| (*p, d.blue_work))
@@ -182,14 +189,13 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
                 }
             })
             .map(|(h, _)| h)
-            .unwrap_or(parent_hash);
+            .ok_or_else(|| format!("UnknownParent: no valid parent found for {:?}", block_hash))?;
 
-        // Get selected parent's data
+        // Get selected parent's data - MUST exist now
         let parent_data = self.ghostdag_store.get_ghostdag_data(&selected_parent)
-            .unwrap_or_default();
+            .ok_or_else(|| format!("UnknownParent: selected parent {:?} missing", selected_parent))?;
 
-        // Simplified mergeset: other parents become blues (for MVP)
-        // Full implementation would check k-cluster property
+        // Mergeset: other parents that we have in our store become blues
         let mergeset_blues: Vec<H256> = all_parents.iter()
             .filter(|p| **p != selected_parent)
             .filter(|p| self.ghostdag_store.get_ghostdag_data(p).is_some())
@@ -198,14 +204,14 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
 
         // Calculate blue_score and blue_work
         let blue_score = parent_data.blue_score + 1 + mergeset_blues.len() as u64;
-        let blue_work = parent_data.blue_work + 1 + mergeset_blues.len() as u128; // +1 per block for MVP
+        let blue_work = parent_data.blue_work + 1 + mergeset_blues.len() as u128;
 
         let data = GhostdagData {
             blue_score,
             blue_work,
             selected_parent,
             mergeset_blues,
-            mergeset_reds: vec![], // Simplified: no reds for MVP
+            mergeset_reds: vec![],
             blues_anticone_sizes: vec![],
         };
 
@@ -214,9 +220,11 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
         self.ghostdag_store.store_parents(&block_hash, &all_parents)?;
         self.ghostdag_store.update_tips(&block_hash, &all_parents)?;
 
-        // Update children for each parent
+        // Update children for each parent we have
         for parent in &all_parents {
-            let _ = self.ghostdag_store.add_child(parent, &block_hash);
+            if self.ghostdag_store.get_ghostdag_data(parent).is_some() {
+                let _ = self.ghostdag_store.add_child(parent, &block_hash);
+            }
         }
 
         log::info!(
