@@ -21,7 +21,7 @@ use sc_service::{
     error::Error as ServiceError, Configuration, TaskManager, TFullBackend, TFullClient,
 };
 use sc_telemetry::{Telemetry, TelemetryWorker};
-use sp_consensus::{BlockOrigin, SelectChain};
+use sp_consensus::{BlockOrigin, SelectChain, SyncOracle};
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT};
 use sp_api::ProvideRuntimeApi;
 
@@ -562,6 +562,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         let mining_store = GhostdagStore::new(client.clone());
         let block_import = client.clone();
         let select_chain_mining = select_chain.clone();
+        let mining_sync_service = sync_service.clone();
 
         task_manager.spawn_handle().spawn_blocking(
             "ghostdag-miner",
@@ -572,6 +573,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 let target = difficulty_to_target(difficulty);
 
                 loop {
+                    // CRITICAL: Pause mining while syncing (ChatGPT/Grok fix)
+                    if mining_sync_service.is_major_syncing() {
+                        log::debug!("⏸️  Pausing mining - node is syncing...");
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        continue;
+                    }
                     interval.tick().await;
 
                     // Get best block from GHOSTDAG select chain
