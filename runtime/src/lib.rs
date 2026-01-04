@@ -235,22 +235,6 @@ impl pallet_privacy::Config for Runtime {
 }
 
 // ============================================
-// VALIDATOR FAUCET - Permissionless Bootstrap
-// ============================================
-parameter_types! {
-    pub const ClaimAmount: u128 = 2_000_000_000_000;
-    pub const PowDifficulty: u32 = 18;
-    pub const MaxClaimsPerBlock: u32 = 5;
-}
-
-impl pallet_validator_faucet::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type ClaimAmount = ClaimAmount;
-    type PowDifficulty = PowDifficulty;
-    type MaxClaimsPerBlock = MaxClaimsPerBlock;
-}
-
-// ============================================
 // EVM CONFIGURATION - ETHEREUM COMPATIBILITY
 // ============================================
 
@@ -447,7 +431,6 @@ construct_runtime!(
         Authorship: pallet_authorship,
         Halving: pallet_halving,
         Privacy: pallet_privacy,
-        ValidatorFaucet: pallet_validator_faucet,
         EVM: pallet_evm,
         Ethereum: pallet_ethereum,
         BaseFee: pallet_base_fee,

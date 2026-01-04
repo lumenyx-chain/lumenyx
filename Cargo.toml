@@ -7,7 +7,6 @@ members = [
     "pallets/privacy",
     "pallets/halving",
     "primitives",
-    "pallets/validator-faucet",
 ]
 
 exclude = [

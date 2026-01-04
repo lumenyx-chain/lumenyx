@@ -4699,7 +4699,6 @@ dependencies = [
  "pallet-timestamp",
  "pallet-transaction-payment",
  "pallet-transaction-payment-rpc-runtime-api",
- "pallet-validator-faucet",
  "parity-scale-codec",
  "scale-info",
  "sp-api",
@@ -5806,22 +5805,6 @@ dependencies = [
  "sp-api",
  "sp-runtime",
  "sp-weights",
-]
-
-[[package]]
-name = "pallet-validator-faucet"
-version = "1.0.0"
-dependencies = [
- "frame-support",
- "frame-system",
- "log",
- "pallet-balances",
- "parity-scale-codec",
- "scale-info",
- "sp-core",
- "sp-io",
- "sp-runtime",
- "sp-std",
 ]
 
 [[package]]

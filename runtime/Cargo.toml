@@ -66,7 +66,6 @@ pallet-evm-precompile-blake2 = { git = "https://github.com/polkadot-evm/frontier
 lumenyx-primitives = { path = "../primitives", default-features = false }
 pallet-halving = { path = "../pallets/halving", default-features = false }
 pallet-privacy = { path = "../pallets/privacy", default-features = false }
-pallet-validator-faucet = { path = "../pallets/validator-faucet", default-features = false }
 
 [features]
 default = ["std"]
@@ -117,6 +116,5 @@ std = [
     "lumenyx-primitives/std",
     "pallet-halving/std",
     "pallet-privacy/std",
-    "pallet-validator-faucet/std",
     "substrate-wasm-builder",
 ]
