@@ -108,3 +108,11 @@ GPL-3.0
 ---
 
 No company. No foundation. No website. No social media. Just code and consensus.
+
+## Community Bootnodes
+
+The network must survive without its creator. Help keep it alive by running a bootnode.
+
+**[Bootnodes List](https://github.com/lumenyx-chain/lumenyx/wiki/Bootnodes)** - Add your node here
+
+When the original nodes go offline, your nodes keep the network running.
