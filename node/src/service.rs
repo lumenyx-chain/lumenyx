@@ -573,10 +573,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 let target = difficulty_to_target(difficulty);
 
                 loop {
-                    // CRITICAL: Pause mining while syncing (ChatGPT/Grok fix)
-                    if mining_sync_service.is_major_syncing() {
-                        log::debug!("⏸️  Pausing mining - node is syncing...");
-                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    // KASPA-STYLE: Only pause if no peers (isolated node)
+                    // GHOSTDAG handles convergence via blue_work - dont block based on block number
+                    if mining_sync_service.num_connected_peers() == 0 {
+                        log::debug!("⏸️  No peers - waiting for connection...");
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     }
                     interval.tick().await;
