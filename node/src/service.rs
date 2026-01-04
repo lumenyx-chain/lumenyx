@@ -265,8 +265,9 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> Verifier<Block> for Ghost
         // CRITICAL: Use Custom fork choice based on blue_work
         // Instead of LongestChain, we tell Substrate to use Custom
         // and handle selection in GhostdagSelectChain
+        // Let SelectChain decide best via blue_work comparison
         block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(
-            ghostdag_data.blue_work > 0 // Always true for valid blocks
+            false // Import block but dont force as best - SelectChain will decide
         ));
 
         Ok(block)
