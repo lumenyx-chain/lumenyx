@@ -1,6 +1,11 @@
 //! LUMENYX Service Configuration - GHOSTDAG PoW
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::path::PathBuf;
+use std::fs;
+use sp_core::{sr25519, Pair, crypto::Ss58Codec};
+use sp_runtime::generic::DigestItem;
+use codec::Encode;
 
 use futures::prelude::*;
 use lumenyx_runtime::{self, opaque::Block, RuntimeApi};
@@ -43,6 +48,54 @@ pub struct FrontierPartialComponents {
 const GHOSTDAG_K: u64 = 18;
 const TARGET_BLOCK_TIME_MS: u64 = 1000;
 const INITIAL_DIFFICULTY: u64 = 100;
+
+/// GHOSTDAG Engine ID for digests
+const GHOSTDAG_ENGINE_ID: sp_runtime::ConsensusEngineId = *b"GDAG";
+
+/// Miner address digest structure
+#[derive(Clone, codec::Encode, codec::Decode)]
+struct MinerAddressDigest {
+    miner: [u8; 32],
+}
+
+/// Load or generate miner keypair
+fn get_or_create_miner_key(base_path: &std::path::Path) -> sr25519::Pair {
+    let key_file = base_path.join("miner-key");
+    
+    if key_file.exists() {
+        // Load existing key
+        if let Ok(seed_hex) = fs::read_to_string(&key_file) {
+            if let Ok(seed_bytes) = hex::decode(seed_hex.trim()) {
+                if seed_bytes.len() == 32 {
+                    let mut seed = [0u8; 32];
+                    seed.copy_from_slice(&seed_bytes);
+                    return sr25519::Pair::from_seed(&seed);
+                }
+            }
+        }
+    }
+    
+    // Generate new key
+    let (pair, phrase, seed) = sr25519::Pair::generate_with_phrase(None);
+    let seed_hex = hex::encode(seed);
+    
+    // Save seed to file
+    if let Err(e) = fs::write(&key_file, &seed_hex) {
+        log::warn!("Failed to save miner key: {:?}", e);
+    }
+    
+    // Log the important info
+    log::info!("==========================================");
+    log::info!("🔑 NEW MINER WALLET GENERATED!");
+    log::info!("==========================================");
+    log::info!("📝 Seed phrase: {}", phrase);
+    log::info!("📫 Address: {}", pair.public().to_ss58check());
+    log::info!("==========================================");
+    log::info!("⚠️  SAVE YOUR SEED PHRASE! This is the ONLY way to recover your funds!");
+    log::info!("==========================================");
+    
+    pair
+}
 
 pub struct GhostdagVerifier;
 
@@ -180,6 +233,8 @@ pub fn new_partial(
 }
 
 pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
+    // Save base path before config is moved
+    let miner_base_path = config.base_path.path().to_path_buf();
     let sc_service::PartialComponents {
         client,
         backend,
@@ -338,6 +393,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         use sc_basic_authorship::ProposerFactory;
         use sp_inherents::InherentDataProvider;
         
+
+        // Load or create miner wallet
+        let miner_key_path = miner_base_path.clone();
+        let miner_pair = get_or_create_miner_key(&miner_key_path);
+        let miner_address: [u8; 32] = miner_pair.public().0;
+        log::info!("💰 Mining rewards will go to: {}", miner_pair.public().to_ss58check());
         log::info!("⛏️  Starting GHOSTDAG block production...");
         
         let mut proposer_factory = ProposerFactory::new(
@@ -394,7 +455,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     // Create block proposal
                     let proposal = match proposer.propose(
                         inherent_data,
-                        sp_runtime::generic::Digest::default(),
+                        {
+                        // Create digest with miner address
+                        let miner_digest = MinerAddressDigest { miner: miner_address };
+                        let pre_runtime = DigestItem::PreRuntime(GHOSTDAG_ENGINE_ID, miner_digest.encode());
+                        sp_runtime::generic::Digest { logs: vec![pre_runtime] }
+                    },
                         Duration::from_millis(500),
                         None,
                     ).await {

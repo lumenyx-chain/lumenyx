@@ -182,12 +182,19 @@ impl pallet_transaction_payment::Config for Runtime {
 /// Find block author for GHOSTDAG PoW
 pub struct GhostdagAuthorFinder;
 impl FindAuthor<AccountId> for GhostdagAuthorFinder {
-    fn find_author<'a, I>(_digests: I) -> Option<AccountId>
+    fn find_author<'a, I>(digests: I) -> Option<AccountId>
     where
         I: 'a + IntoIterator<Item = (sp_runtime::ConsensusEngineId, &'a [u8])>,
     {
-        // In PoW, there is no predefined author
-        // The block author is whoever mines the block
+        use codec::Decode;
+        // Look for miner address in GHOSTDAG digest
+        for (id, data) in digests {
+            if id == dag_digest::GHOSTDAG_ENGINE_ID {
+                if let Ok(miner) = dag_digest::MinerAddressDigest::decode(&mut &data[..]) {
+                    return Some(AccountId::from(miner.miner));
+                }
+            }
+        }
         None
     }
 }

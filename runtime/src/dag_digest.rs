@@ -140,3 +140,43 @@ impl GhostdagSeal {
         }
     }
 }
+
+/// Miner address digest - carries the block author's address for rewards
+#[derive(Clone, Encode, Decode, RuntimeDebug, TypeInfo, PartialEq, Eq)]
+pub struct MinerAddressDigest {
+    /// The account that mined this block and receives the reward
+    pub miner: [u8; 32],
+}
+
+impl MinerAddressDigest {
+    /// Create new miner address digest
+    pub fn new(miner: [u8; 32]) -> Self {
+        Self { miner }
+    }
+
+    /// Create pre-runtime digest item with miner address
+    pub fn to_pre_runtime(&self) -> DigestItem {
+        DigestItem::PreRuntime(GHOSTDAG_ENGINE_ID, self.encode())
+    }
+
+    /// Try to extract miner address from pre-runtime digest
+    pub fn from_pre_runtime(item: &DigestItem) -> Option<Self> {
+        match item {
+            DigestItem::PreRuntime(id, data) if *id == GHOSTDAG_ENGINE_ID => {
+                // Try to decode as MinerAddressDigest
+                Self::decode(&mut &data[..]).ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract from block digest logs
+    pub fn from_digest(digest: &sp_runtime::Digest) -> Option<Self> {
+        for log in digest.logs() {
+            if let Some(miner_digest) = Self::from_pre_runtime(log) {
+                return Some(miner_digest);
+            }
+        }
+        None
+    }
+}
