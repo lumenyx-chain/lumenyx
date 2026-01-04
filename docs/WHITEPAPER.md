@@ -1,181 +1,144 @@
-LUMENYX: A Peer-to-Peer Electronic Cash System with Privacy
+# LUMENYX: A Peer-to-Peer Electronic Cash System with Privacy
 
+## Abstract
 
+A purely peer-to-peer version of electronic cash with fixed supply, smart contracts, and optional privacy. The network uses GHOSTDAG proof-of-work consensus with 1-3 second blocks. Total supply is limited to 21,000,000 LUMENYX with a halving emission schedule. Users can choose between transparent or shielded transactions. No governance, no team allocation, no venture capital. The code is the law.
 
+## 1. Introduction
 
-Abstract
+LUMENYX combines the best properties of existing cryptocurrencies:
 
-A purely peer-to-peer version of electronic cash with fixed supply, smart
-contracts, and optional privacy. The network uses proof-of-stake consensus 
-with 3-second block finality. Total supply is limited to 21,000,000 LUMENYX 
-with a halving emission schedule. Users can choose between transparent or 
-shielded transactions. No governance, no team allocation, no venture capital. 
-The code is the law.
+- **Bitcoin**: Fixed 21M supply, PoW consensus, halving schedule
+- **Ethereum**: EVM smart contracts, programmability
+- **Kaspa**: GHOSTDAG blockDAG, fast blocks without orphans
+- **Zcash**: ZK-SNARK privacy (optional)
 
+The result is a complete monetary system:
 
-1. Introduction
+- Fixed supply (21,000,000)
+- Smart contracts (EVM compatible)
+- Optional privacy (zero-knowledge proofs)
+- Fast blocks (1-3 seconds)
+- True decentralization (fair launch)
+- Zero governance (code is law)
 
-LUMENYX is designed to be a complete solution:
+## 2. GHOSTDAG Consensus
 
-  - Fixed supply (21,000,000)
-  - Smart contracts (EVM compatible)
-  - Optional privacy (zero-knowledge proofs)
-  - Fast blocks (3 seconds)
-  - True decentralization (fair launch)
-  - Zero governance (code is law)
+Traditional blockchains discard blocks found simultaneously ("orphans"). This limits throughput and wastes mining work.
 
+GHOSTDAG (Greedy Heaviest-Observed Sub-DAG) solves this by organizing blocks in a Directed Acyclic Graph:
+```
+    [Block A]
+       /  \
+[Block B]  [Block C]  <- Both valid, both included
+       \  /
+    [Block D]
+```
 
-2. Transactions
+### Properties
 
-Standard transactions are transparent and traceable.
-For users requiring privacy, shielded transactions use zero-knowledge proofs
-to hide sender, receiver, and amount information.
+| Parameter | Value |
+|-----------|-------|
+| K (anticone limit) | 18 |
+| Max parents | 10 |
+| Block time | 1-3 seconds |
+| Hash function | Blake3 |
 
-Transparent transfer:
-  Alice → 100 LUMENYX → Bob (visible on chain)
+### Blue Set Selection
 
-Shielded transfer:
-  [nullifier] → [commitment] (only proofs visible, no identities)
+GHOSTDAG distinguishes "blue" (honest) blocks from "red" (potentially adversarial) blocks using the K-cluster algorithm. Transactions in blue blocks are confirmed; red block transactions may be rejected if conflicting.
 
+### Finality
 
-3. Proof-of-Stake
+Probabilistic finality after ~6 blocks (~18 seconds). Like Bitcoin, but faster.
 
-The network uses Aura for block production and GRANDPA for finality.
-Any participant can become a validator by running a node and staking LUMENYX.
+## 3. Proof of Work
 
-Block time: 3 seconds
-Finality: ~3 seconds
-Minimum stake: 1 LUMENYX
-Slashing: 30% for misbehavior
-Unbonding: 28 days
+Pure PoW mining. No staking, no validators, no permission required.
+```
+hash = Blake3(block_header || nonce)
+if hash < target:
+    block is valid
+```
 
+Anyone with a CPU can mine. No special hardware required (GPU/ASIC resistance through memory-hard hashing in future versions).
 
-4. Emission Schedule
+### Difficulty Adjustment
 
-Total supply: 21,000,000 LUMENYX (fixed, immutable)
+Dynamic difficulty adjustment every block to maintain 1-3 second block times.
 
-The emission follows a three-phase schedule:
+## 4. Transactions
 
-Phase 0 - Bootstrap (~12 days):
-  Block reward: 2.4 LUMENYX
-  Total blocks: 350,000
-  Total emission: 840,000 LUMENYX (4.0%)
-  Purpose: Network security initialization
+### Standard Transactions
 
-Phase 1 - Early Adoption (30 days):
-  Block reward: 0.3 LUMENYX
-  Total blocks: 864,000
-  Total emission: 259,200 LUMENYX (1.2%)
-  Purpose: Early adopter incentives
+Transparent, traceable on-chain. Compatible with Ethereum tooling.
 
-Phase 2 - Standard (forever):
-  Block reward: 0.25 LUMENYX (with halving)
-  Daily emission: 7,200 LUMENYX
-  Halving: Every 42,076,800 blocks (~4 years)
-  Purpose: Long-term scarcity
+### Private Transactions (Optional)
 
-Emission distribution over time:
+Using Groth16 ZK-SNARKs:
 
-  Year 1:   ~2,628,000 LUMENYX (12.5%)
-  Year 4:  ~10,500,000 LUMENYX (50%)
-  Year 8:  ~15,750,000 LUMENYX (75%)
-  Year 50: ~21,000,000 LUMENYX (100%)
+1. **Shield**: Convert public LUMENYX to private
+2. **Transfer**: Move private LUMENYX (hidden sender, receiver, amount)
+3. **Unshield**: Convert private LUMENYX back to public
 
+Privacy is optional. Users choose per-transaction.
 
-5. Fee Structure
+## 5. Smart Contracts
 
-Transaction fees are designed to remain low regardless of token price.
+Full EVM compatibility via Frontier. Deploy Solidity contracts as-is.
 
-Base transfer fee: 0.0001 LUMENYX (~$0.001)
-Smart contract fee: 0.001 LUMENYX (~$0.01)
-Privacy (ZK) fee: 0.01 LUMENYX (~$0.05)
+| Property | Value |
+|----------|-------|
+| Chain ID | 7777 |
+| Gas model | Ethereum-compatible |
+| Opcodes | Full EVM support |
 
-All fees are paid to validators who produce blocks.
+## 6. Emission Schedule
 
+| Phase | Block Reward | Approximate Duration |
+|-------|--------------|---------------------|
+| Bootstrap | 2.4 LUMENYX | ~12 days |
+| Early | 0.3 LUMENYX | ~30 days |
+| Standard | 0.25 LUMENYX | Halving every ~4 years |
 
-6. Privacy Mechanism
+Total supply approaches 21,000,000 asymptotically over 100+ years.
 
-The privacy system uses a shielded pool with note commitments and nullifiers.
+## 7. Distribution
 
-Shield: Convert transparent LUMENYX to shielded
-  - Sender visible (last time identity linked)
-  - Creates note commitment
-  - LUMENYX enters shielded pool
+- No premine
+- No ICO/IEO/IDO
+- No team allocation
+- No foundation
+- No venture capital
+- No airdrops
 
-Shielded Transfer: Anonymous transfer
-  - No sender or receiver visible
-  - Only cryptographic proofs on chain
-  - Nullifier prevents double-spend
+100% distributed through mining.
 
-Unshield: Convert shielded LUMENYX to transparent
-  - Recipient visible (identity revealed)
-  - Note consumed via nullifier
-  - LUMENYX exits shielded pool
+## 8. Governance
 
-The system ensures:
-  - Conservation of value (inputs = outputs)
-  - No double-spending (nullifier uniqueness)
-  - Unlinkability (transactions cannot be traced)
+None. The code is the law. No upgrades without hard fork. No admin keys. No sudo. No democracy. No plutocracy.
 
+## 9. Launch Philosophy
 
-7. Smart Contracts
+Satoshi-style:
+1. Write the code
+2. Launch the network
+3. Disappear
 
-Full EVM and WASM compatibility allows deployment of existing contracts.
-Chain ID: 7777
+The network must survive without its creator.
 
-Supported standards:
-  - ERC-20 (fungible tokens)
-  - ERC-721 (NFTs)
-  - ERC-1155 (multi-token)
-  - Custom contracts
+## 10. Conclusion
 
-Precompiled contracts:
-  - 0x01: ecrecover (signature recovery)
-  - 0x02: SHA-256
-  - 0x03: RIPEMD-160
-  - 0x04: Identity
-  - 0x05: Modexp
-  - 0x06-08: BN128 (elliptic curve)
-  - 0x09: Blake2F
+LUMENYX is digital cash for the 21st century:
 
-Developers can build:
-  - Decentralized exchanges
-  - Lending protocols
-  - DAOs
-  - Games
-  - Any application
+- Scarce like gold (21M cap)
+- Fast like digital payments (1-3 sec)
+- Private when needed (ZK-SNARKs)
+- Programmable (EVM)
+- Decentralized (PoW, no team)
 
+No promises. No roadmap. No marketing. Just code.
 
-8. Network Parameters
+---
 
-Block time:           3,000 ms (3 seconds)
-Blocks per day:       28,800
-Blocks per year:      10,519,200
-Max validators:       100
-SS58 prefix:          42
-Token decimals:       12
-Token symbol:         LUMENYX
-
-
-9. Governance
-
-There is no governance mechanism. No voting. No proposals. No council.
-
-The code is the law. If users disagree, they can fork.
-
-This design ensures:
-  - No centralization of power
-  - No political capture
-  - No regulatory target
-  - True immutability
-
-
-10. Conclusion
-
-LUMENYX combines fixed supply, smart contracts, optional privacy, and speed
-into one chain.
-
-The fair launch model, with documented bootstrap phase and no pre-allocation,
-ensures equitable distribution. The absence of governance prevents centralization.
-
-The network is live.
+*"Banks ended up in the headlines. Today control over digital money sits in a few hands: founders, large holders, intermediaries and those who write the rules."*
