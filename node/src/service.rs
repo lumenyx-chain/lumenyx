@@ -1,11 +1,16 @@
-//! LUMENYX Service Configuration - GHOSTDAG PoW
+//! LUMENYX Service Configuration - GHOSTDAG PoW with proper fork choice
+//!
+//! Key changes from previous version:
+//! 1. Uses GhostdagSelectChain instead of LongestChain
+//! 2. Verifier processes blocks through GHOSTDAG (calculates blue_score/blue_work)
+//! 3. Fork choice based on blue_work, not block number
+//! 4. All blocks (own + received) are added to DAG store
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
-use std::path::PathBuf;
 use std::fs;
-use sp_core::{sr25519, Pair, crypto::Ss58Codec};
+use sp_core::{sr25519, Pair, crypto::Ss58Codec, H256};
 use sp_runtime::generic::DigestItem;
-use codec::Encode;
+use codec::{Encode, Decode};
 
 use futures::prelude::*;
 use lumenyx_runtime::{self, opaque::Block, RuntimeApi};
@@ -16,13 +21,15 @@ use sc_service::{
     error::Error as ServiceError, Configuration, TaskManager, TFullBackend, TFullClient,
 };
 use sc_telemetry::{Telemetry, TelemetryWorker};
-use sp_consensus::{BlockOrigin, Proposer};
-use sp_core::H256;
+use sp_consensus::{BlockOrigin, SelectChain};
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT};
 use sp_api::ProvideRuntimeApi;
 
 // GHOSTDAG imports
-use sc_consensus_ghostdag::GhostdagStore;
+use sc_consensus_ghostdag::{GhostdagStore, GhostdagData};
+
+// Custom select chain
+use crate::ghostdag_select::GhostdagSelectChain;
 
 // Frontier imports
 use fc_mapping_sync::{EthereumBlockNotification, EthereumBlockNotificationSinks, SyncStrategy, kv::MappingSyncWorker};
@@ -36,7 +43,7 @@ pub fn db_config_dir(config: &Configuration) -> std::path::PathBuf {
 
 pub type FullClient = TFullClient<Block, RuntimeApi, WasmExecutor<sp_io::SubstrateHostFunctions>>;
 type FullBackend = TFullBackend<Block>;
-type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
+type FullSelectChain = GhostdagSelectChain<Block, FullBackend, FullClient>;
 pub type FrontierBackend = fc_db::Backend<Block, FullClient>;
 
 pub struct FrontierPartialComponents {
@@ -58,12 +65,17 @@ struct MinerAddressDigest {
     miner: [u8; 32],
 }
 
+/// DAG parents digest - for multi-parent blocks
+#[derive(Clone, codec::Encode, codec::Decode)]
+struct DagParentsDigest {
+    parents: Vec<H256>,
+}
+
 /// Load or generate miner keypair
 fn get_or_create_miner_key(base_path: &std::path::Path) -> sr25519::Pair {
     let key_file = base_path.join("miner-key");
-    
+
     if key_file.exists() {
-        // Load existing key
         if let Ok(seed_hex) = fs::read_to_string(&key_file) {
             if let Ok(seed_bytes) = hex::decode(seed_hex.trim()) {
                 if seed_bytes.len() == 32 {
@@ -74,30 +86,25 @@ fn get_or_create_miner_key(base_path: &std::path::Path) -> sr25519::Pair {
             }
         }
     }
-    
-    // Generate new key
+
     let (pair, phrase, seed) = sr25519::Pair::generate_with_phrase(None);
     let seed_hex = hex::encode(seed);
-    
-    // Save seed to file
+
     if let Err(e) = fs::write(&key_file, &seed_hex) {
         log::warn!("Failed to save miner key: {:?}", e);
     }
-    
-    // Log the important info
+
     log::info!("==========================================");
     log::info!("🔑 NEW MINER WALLET GENERATED!");
     log::info!("==========================================");
     log::info!("📝 Seed phrase: {}", phrase);
     log::info!("📫 Address: {}", pair.public().to_ss58check());
     log::info!("==========================================");
-    log::info!("⚠️  SAVE YOUR SEED PHRASE! This is the ONLY way to recover your funds!");
+    log::info!("⚠️  SAVE YOUR SEED PHRASE!");
     log::info!("==========================================");
-    
+
     pair
 }
-
-pub struct GhostdagVerifier;
 
 fn compute_pow_hash(data: &[u8], nonce: &[u8; 32]) -> H256 {
     let mut hasher = blake3::Hasher::new();
@@ -123,13 +130,137 @@ fn hash_meets_target(hash: &H256, target: &H256) -> bool {
     hash.as_bytes() <= target.as_bytes()
 }
 
+/// GHOSTDAG Verifier - processes blocks through DAG and sets fork choice
+pub struct GhostdagVerifier<C> {
+    client: Arc<C>,
+    ghostdag_store: GhostdagStore<C>,
+}
+
+impl<C> GhostdagVerifier<C> {
+    pub fn new(client: Arc<C>) -> Self {
+        let ghostdag_store = GhostdagStore::new(client.clone());
+        Self { client, ghostdag_store }
+    }
+}
+
+impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
+    /// Process a block through GHOSTDAG
+    fn process_ghostdag(&self, block_hash: H256, parent_hash: H256, extra_parents: Vec<H256>) -> Result<GhostdagData, String> {
+        // Collect all parents (header parent + extra parents from digest)
+        let mut all_parents = vec![parent_hash];
+        for p in extra_parents {
+            if p != parent_hash && !all_parents.contains(&p) {
+                all_parents.push(p);
+            }
+        }
+
+        // For genesis, parent is zero
+        if parent_hash == H256::zero() || all_parents.iter().all(|p| *p == H256::zero()) {
+            let genesis_data = GhostdagData {
+                blue_score: 0,
+                blue_work: 1, // Genesis has work 1
+                selected_parent: H256::zero(),
+                mergeset_blues: vec![],
+                mergeset_reds: vec![],
+                blues_anticone_sizes: vec![],
+            };
+            self.ghostdag_store.store_ghostdag_data(&block_hash, &genesis_data)?;
+            self.ghostdag_store.store_parents(&block_hash, &[])?;
+            self.ghostdag_store.update_tips(&block_hash, &[])?;
+            return Ok(genesis_data);
+        }
+
+        // Find selected parent (highest blue_work)
+        let selected_parent = all_parents.iter()
+            .filter_map(|p| {
+                self.ghostdag_store.get_ghostdag_data(p).map(|d| (*p, d.blue_work))
+            })
+            .max_by(|a, b| {
+                match a.1.cmp(&b.1) {
+                    std::cmp::Ordering::Equal => b.0.cmp(&a.0), // Lower hash wins tie
+                    other => other,
+                }
+            })
+            .map(|(h, _)| h)
+            .unwrap_or(parent_hash);
+
+        // Get selected parent's data
+        let parent_data = self.ghostdag_store.get_ghostdag_data(&selected_parent)
+            .unwrap_or_default();
+
+        // Simplified mergeset: other parents become blues (for MVP)
+        // Full implementation would check k-cluster property
+        let mergeset_blues: Vec<H256> = all_parents.iter()
+            .filter(|p| **p != selected_parent)
+            .filter(|p| self.ghostdag_store.get_ghostdag_data(p).is_some())
+            .cloned()
+            .collect();
+
+        // Calculate blue_score and blue_work
+        let blue_score = parent_data.blue_score + 1 + mergeset_blues.len() as u64;
+        let blue_work = parent_data.blue_work + 1 + mergeset_blues.len() as u128; // +1 per block for MVP
+
+        let data = GhostdagData {
+            blue_score,
+            blue_work,
+            selected_parent,
+            mergeset_blues,
+            mergeset_reds: vec![], // Simplified: no reds for MVP
+            blues_anticone_sizes: vec![],
+        };
+
+        // Store in DAG
+        self.ghostdag_store.store_ghostdag_data(&block_hash, &data)?;
+        self.ghostdag_store.store_parents(&block_hash, &all_parents)?;
+        self.ghostdag_store.update_tips(&block_hash, &all_parents)?;
+
+        // Update children for each parent
+        for parent in &all_parents {
+            let _ = self.ghostdag_store.add_child(parent, &block_hash);
+        }
+
+        log::info!(
+            "🔷 GHOSTDAG: block {:?} blue_score={} blue_work={} selected_parent={:?}",
+            block_hash, data.blue_score, data.blue_work, data.selected_parent
+        );
+
+        Ok(data)
+    }
+}
+
 #[async_trait::async_trait]
-impl Verifier<Block> for GhostdagVerifier {
+impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> Verifier<Block> for GhostdagVerifier<C> {
     async fn verify(
         &self,
         mut block: BlockImportParams<Block>,
     ) -> Result<BlockImportParams<Block>, String> {
-        block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::LongestChain);
+        let block_hash = block.header.hash();
+        let parent_hash = *block.header.parent_hash();
+        
+        // Extract extra parents from digest (if any)
+        let mut extra_parents = Vec::new();
+        for log in block.header.digest().logs() {
+            if let DigestItem::Other(data) = log {
+                if let Ok(digest) = DagParentsDigest::decode(&mut &data[..]) {
+                    extra_parents = digest.parents;
+                    break;
+                }
+            }
+        }
+
+        // Process through GHOSTDAG
+        let block_h256 = H256::from_slice(block_hash.as_ref());
+        let parent_h256 = H256::from_slice(parent_hash.as_ref());
+        
+        let ghostdag_data = self.process_ghostdag(block_h256, parent_h256, extra_parents)?;
+
+        // CRITICAL: Use Custom fork choice based on blue_work
+        // Instead of LongestChain, we tell Substrate to use Custom
+        // and handle selection in GhostdagSelectChain
+        block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(
+            ghostdag_data.blue_work > 0 // Always true for valid blocks
+        ));
+
         Ok(block)
     }
 }
@@ -152,6 +283,7 @@ pub fn new_partial(
     >,
     ServiceError,
 > {
+    // Auto-create network key
     let network_path = config.network.net_config_path.clone()
         .unwrap_or_else(|| config.base_path.config_dir(config.chain_spec.id()))
         .join("network");
@@ -161,6 +293,7 @@ pub fn new_partial(
         use sp_core::Pair;
         let keypair = sp_core::ed25519::Pair::generate().0;
         let _ = std::fs::write(&secret_key_path, keypair.to_raw_vec());
+        log::info!("🔑 Generated network key at {:?}", secret_key_path);
     }
 
     let telemetry = config
@@ -188,7 +321,8 @@ pub fn new_partial(
         telemetry
     });
 
-    let select_chain = sc_consensus::LongestChain::new(backend.clone());
+    // Use GHOSTDAG select chain instead of LongestChain
+    let select_chain = GhostdagSelectChain::new(backend.clone(), client.clone());
 
     let transaction_pool = sc_transaction_pool::BasicPool::new_full(
         config.transaction_pool.clone(),
@@ -198,8 +332,11 @@ pub fn new_partial(
         client.clone(),
     );
 
+    // Use GHOSTDAG verifier
+    let verifier = GhostdagVerifier::new(client.clone());
+    
     let import_queue = sc_consensus::BasicQueue::new(
-        GhostdagVerifier,
+        verifier,
         Box::new(client.clone()),
         None,
         &task_manager.spawn_essential_handle(),
@@ -233,8 +370,8 @@ pub fn new_partial(
 }
 
 pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
-    // Save base path before config is moved
     let miner_base_path = config.base_path.path().to_path_buf();
+    
     let sc_service::PartialComponents {
         client,
         backend,
@@ -251,6 +388,16 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         fee_history_cache,
         fee_history_cache_limit,
     } = frontier_partial;
+
+    // Initialize GHOSTDAG with genesis
+    let ghostdag_store = GhostdagStore::new(client.clone());
+    let genesis_hash = client.info().genesis_hash;
+    let genesis_h256 = H256::from_slice(genesis_hash.as_ref());
+    
+    if ghostdag_store.get_ghostdag_data(&genesis_h256).is_none() {
+        let _ = ghostdag_store.init_genesis(genesis_h256);
+        log::info!("🔷 GHOSTDAG genesis initialized: {:?}", genesis_h256);
+    }
 
     let net_config = sc_network::config::FullNetworkConfiguration::<
         Block,
@@ -278,11 +425,8 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     let force_authoring = config.force_authoring;
     let prometheus_registry = config.prometheus_registry().cloned();
 
-    let ghostdag_store = GhostdagStore::new(client.clone());
-    let genesis_hash = client.info().genesis_hash;
-    let _ = ghostdag_store.init_genesis(H256::from_slice(genesis_hash.as_ref()));
-
-    log::info!("🔷 GHOSTDAG: K={}, target={}ms, difficulty={}", GHOSTDAG_K, TARGET_BLOCK_TIME_MS, INITIAL_DIFFICULTY);
+    log::info!("🔷 GHOSTDAG: K={}, target={}ms, initial_difficulty={}", 
+        GHOSTDAG_K, TARGET_BLOCK_TIME_MS, INITIAL_DIFFICULTY);
 
     let pubsub_notification_sinks: Arc<EthereumBlockNotificationSinks<EthereumBlockNotification<Block>>> = Default::default();
     let storage_override = Arc::new(StorageOverrideHandler::new(client.clone()));
@@ -386,21 +530,18 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     })?;
 
     // ============================================
-    // GHOSTDAG MINING WITH REAL BLOCK PRODUCTION
+    // GHOSTDAG MINING
     // ============================================
     if role.is_authority() || force_authoring {
-        use sp_consensus::Environment;
+        use sp_consensus::{Environment, Proposer};
         use sc_basic_authorship::ProposerFactory;
         use sp_inherents::InherentDataProvider;
-        
 
-        // Load or create miner wallet
-        let miner_key_path = miner_base_path.clone();
-        let miner_pair = get_or_create_miner_key(&miner_key_path);
+        let miner_pair = get_or_create_miner_key(&miner_base_path);
         let miner_address: [u8; 32] = miner_pair.public().0;
-        log::info!("💰 Mining rewards will go to: {}", miner_pair.public().to_ss58check());
-        log::info!("⛏️  Starting GHOSTDAG block production...");
-        
+        log::info!("💰 Mining rewards to: {}", miner_pair.public().to_ss58check());
+        log::info!("⛏️  Starting GHOSTDAG miner...");
+
         let mut proposer_factory = ProposerFactory::new(
             task_manager.spawn_handle(),
             client.clone(),
@@ -408,10 +549,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             prometheus_registry.as_ref(),
             telemetry.as_ref().map(|t| t.handle()),
         );
-        
+
         let mining_client = client.clone();
+        let mining_store = GhostdagStore::new(client.clone());
         let block_import = client.clone();
-        
+        let select_chain_mining = select_chain.clone();
+
         task_manager.spawn_handle().spawn_blocking(
             "ghostdag-miner",
             Some("mining"),
@@ -419,20 +562,38 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 let mut interval = tokio::time::interval(Duration::from_millis(TARGET_BLOCK_TIME_MS));
                 let difficulty = INITIAL_DIFFICULTY;
                 let target = difficulty_to_target(difficulty);
-                
+
                 loop {
                     interval.tick().await;
-                    
-                    let info = mining_client.info();
-                    let parent_hash = info.best_hash;
-                    let parent_number = info.best_number;
-                    
-                    // Get parent header
-                    let parent_header = match mining_client.header(parent_hash) {
-                        Ok(Some(h)) => h,
-                        _ => continue,
+
+                    // Get best block from GHOSTDAG select chain
+                    let best_header = match select_chain_mining.best_chain().await {
+                        Ok(h) => h,
+                        Err(e) => {
+                            log::warn!("Failed to get best chain: {:?}", e);
+                            continue;
+                        }
                     };
                     
+                    let parent_hash = best_header.hash();
+                    let parent_number = *best_header.number();
+
+                    // Get all tips for multi-parent block
+                    let tips = match select_chain_mining.leaves().await {
+                        Ok(t) => t,
+                        Err(_) => vec![parent_hash],
+                    };
+
+                    // Select parents: best + other tips (up to MAX_PARENTS)
+                    let max_parents = 10usize;
+                    let mut parents: Vec<H256> = vec![H256::from_slice(parent_hash.as_ref())];
+                    for tip in tips.iter().take(max_parents - 1) {
+                        let tip_h256 = H256::from_slice(tip.as_ref());
+                        if tip_h256 != parents[0] && !parents.contains(&tip_h256) {
+                            parents.push(tip_h256);
+                        }
+                    }
+
                     // Create inherent data
                     let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
                     let inherent_data = match timestamp.create_inherent_data().await {
@@ -442,25 +603,31 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                             continue;
                         }
                     };
-                    
+
                     // Create proposer
-                    let proposer = match proposer_factory.init(&parent_header).await {
+                    let proposer = match proposer_factory.init(&best_header).await {
                         Ok(p) => p,
                         Err(e) => {
                             log::warn!("Failed to create proposer: {:?}", e);
                             continue;
                         }
                     };
+
+                    // Build digest with miner address and extra parents
+                    let miner_digest = MinerAddressDigest { miner: miner_address };
+                    let mut digest_logs = vec![
+                        DigestItem::PreRuntime(GHOSTDAG_ENGINE_ID, miner_digest.encode()),
+                    ];
                     
-                    // Create block proposal
+                    // Add extra parents if any
+                    if parents.len() > 1 {
+                        let parents_digest = DagParentsDigest { parents: parents[1..].to_vec() };
+                        digest_logs.push(DigestItem::Other(parents_digest.encode()));
+                    }
+
                     let proposal = match proposer.propose(
                         inherent_data,
-                        {
-                        // Create digest with miner address
-                        let miner_digest = MinerAddressDigest { miner: miner_address };
-                        let pre_runtime = DigestItem::PreRuntime(GHOSTDAG_ENGINE_ID, miner_digest.encode());
-                        sp_runtime::generic::Digest { logs: vec![pre_runtime] }
-                    },
+                        sp_runtime::generic::Digest { logs: digest_logs },
                         Duration::from_millis(500),
                         None,
                     ).await {
@@ -470,70 +637,120 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                             continue;
                         }
                     };
-                    
+
                     let (block, storage_changes) = (proposal.block, proposal.storage_changes);
                     let (header, body) = block.deconstruct();
-                    
-                    // Mine: find valid nonce for this block
                     let header_hash = header.hash();
+
+                    // Mine: find valid nonce
                     let mut nonce = [0u8; 32];
                     let seed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
                         .as_nanos() as u64;
                     nonce[0..8].copy_from_slice(&seed.to_le_bytes());
-                    
+
                     let mut found = false;
                     for attempt in 0..1_000_000u64 {
                         for i in 0..32 {
                             if nonce[i] == 255 { nonce[i] = 0; }
                             else { nonce[i] += 1; break; }
                         }
-                        
+
                         let pow_hash = compute_pow_hash(header_hash.as_ref(), &nonce);
-                        
+
                         if hash_meets_target(&pow_hash, &target) {
-                            // Import the block
+                            // Process through GHOSTDAG before import
+                            let block_h256 = H256::from_slice(header_hash.as_ref());
+                            let parent_h256 = H256::from_slice(header.parent_hash().as_ref());
+                            
+                            // Calculate GHOSTDAG data
+                            let extra_parents: Vec<H256> = if parents.len() > 1 {
+                                parents[1..].to_vec()
+                            } else {
+                                vec![]
+                            };
+                            
+                            let mut all_parents = vec![parent_h256];
+                            all_parents.extend(extra_parents.iter().cloned());
+                            
+                            let selected_parent = all_parents.iter()
+                                .filter_map(|p| mining_store.get_ghostdag_data(p).map(|d| (*p, d.blue_work)))
+                                .max_by_key(|(_, w)| *w)
+                                .map(|(h, _)| h)
+                                .unwrap_or(parent_h256);
+                            
+                            let parent_data = mining_store.get_ghostdag_data(&selected_parent)
+                                .unwrap_or_default();
+                            
+                            let mergeset_blues: Vec<H256> = all_parents.iter()
+                                .filter(|p| **p != selected_parent)
+                                .filter(|p| mining_store.get_ghostdag_data(p).is_some())
+                                .cloned()
+                                .collect();
+                            
+                            let blue_score = parent_data.blue_score + 1 + mergeset_blues.len() as u64;
+                            let blue_work = parent_data.blue_work + 1 + mergeset_blues.len() as u128;
+                            
+                            let ghostdag_data = GhostdagData {
+                                blue_score,
+                                blue_work,
+                                selected_parent,
+                                mergeset_blues,
+                                mergeset_reds: vec![],
+                                blues_anticone_sizes: vec![],
+                            };
+                            
+                            // Store GHOSTDAG data
+                            let _ = mining_store.store_ghostdag_data(&block_h256, &ghostdag_data);
+                            let _ = mining_store.store_parents(&block_h256, &all_parents);
+                            let _ = mining_store.update_tips(&block_h256, &all_parents);
+                            for p in &all_parents {
+                                let _ = mining_store.add_child(p, &block_h256);
+                            }
+
+                            // Import block with Custom fork choice
                             let mut import_params = BlockImportParams::new(BlockOrigin::Own, header.clone());
                             import_params.body = Some(body.clone());
                             import_params.state_action = sc_consensus::StateAction::ApplyChanges(
                                 sc_consensus::StorageChanges::Changes(storage_changes)
                             );
-                            import_params.fork_choice = Some(sc_consensus::ForkChoiceStrategy::LongestChain);
-                            
+                            import_params.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(true));
+
                             match block_import.import_block(import_params).await {
-                                Ok(result) => {
+                                Ok(_) => {
                                     log::info!(
-                                        "✅ Block #{} imported! hash={:?}, pow={:?}, attempts={}",
+                                        "✅ Block #{} mined! hash={:?} blue_score={} blue_work={} parents={}",
                                         parent_number + 1,
                                         header_hash,
-                                        pow_hash,
-                                        attempt + 1
+                                        blue_score,
+                                        blue_work,
+                                        all_parents.len()
                                     );
                                 }
                                 Err(e) => {
                                     log::error!("❌ Failed to import block: {:?}", e);
                                 }
                             }
-                            
+
                             found = true;
                             break;
                         }
                     }
-                    
+
                     if !found {
                         log::debug!("⏳ No valid nonce found for block #{}", parent_number + 1);
                     }
                 }
             },
         );
-        
+
         log::info!("🚀 GHOSTDAG miner started!");
     } else {
-        log::info!("📡 Sync-only mode");
+        log::info!("📡 Sync-only mode (not mining)");
     }
 
-    log::info!("✅ LUMENYX GHOSTDAG PoW running!");
+    log::info!("✅ LUMENYX GHOSTDAG running!");
     network_starter.start_network();
     Ok(task_manager)
 }
