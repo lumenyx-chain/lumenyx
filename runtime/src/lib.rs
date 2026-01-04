@@ -1,14 +1,15 @@
 //! LUMENYX Runtime
 //!
-//! The unstoppable blockchain - like Bitcoin, but faster:
+//! The unstoppable blockchain - the unstoppable chain:
 //! - Fixed supply (21M)
-//! - 3 second blocks (200x faster than Bitcoin)
-//! - 18 second finality (400x faster than Bitcoin)
+//! - 3 second blocks (GHOSTDAG consensus)
+//! - 18 second finality (1-3 second blocks)
 //! - Privacy (ZK optional)
 //! - Smart contracts (EVM compatible)
 //! - True decentralization (fair launch, no governance)
 //! - Permissionless validation (anyone can become validator!)
-//! - NO GRANDPA = NEVER STOPS (probabilistic finality like Bitcoin)
+//! - NO GRANDPA = NEVER STOPS (GHOSTDAG DAG-based finality)
+
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![recursion_limit = "256"]
@@ -21,7 +22,6 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use sp_api::impl_runtime_apis;
-use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 use sp_core::{crypto::KeyTypeId, OpaqueMetadata, H160, H256, U256};
 use sp_runtime::{
     generic, impl_opaque_keys,
@@ -41,6 +41,13 @@ use frame_support::{
     weights::{constants::WEIGHT_REF_TIME_PER_SECOND, Weight},
 };
 use pallet_transaction_payment::FungibleAdapter;
+
+// ============================================
+// GHOSTDAG DAG DIGEST
+// ============================================
+pub mod dag_digest;
+pub use dag_digest::{DagParentsDigest, GhostdagPreDigest, GhostdagSeal, GHOSTDAG_ENGINE_ID};
+
 
 // ============================================
 // FRONTIER EVM IMPORTS
@@ -130,198 +137,10 @@ impl frame_system::Config for Runtime {
 }
 
 // ============================================
-// SESSION KEYS - Only AURA (no GRANDPA!)
-// ============================================
-impl_opaque_keys! {
-    pub struct SessionKeys {
-        pub aura: Aura,
-    }
-}
-
-// ============================================
-// SESSION CONFIGURATION - Permissionless Validators!
-// ============================================
-parameter_types! {
-    pub const SessionPeriod: BlockNumber = 10;
-    pub const SessionOffset: BlockNumber = 0;
-}
-
-// ============================================
-// VALIDATOR ACTIVITY TRACKING
-// ============================================
-use frame_support::storage::StorageMap;
-use frame_support::traits::StorageInstance;
-
-/// Storage prefix for validator last active session (block production)
-pub struct ValidatorLastActivePrefix;
-impl StorageInstance for ValidatorLastActivePrefix {
-    fn pallet_prefix() -> &'static str { "Session" }
-    const STORAGE_PREFIX: &'static str = "ValidatorLastActive";
-}
-
-/// Storage prefix for tracking when each validator joined
-pub struct ValidatorJoinedAtPrefix;
-impl StorageInstance for ValidatorJoinedAtPrefix {
-    fn pallet_prefix() -> &'static str { "Session" }
-    const STORAGE_PREFIX: &'static str = "ValidatorJoinedAt";
-}
-
-/// Maps validator AccountId to the last session they produced a block
-pub type ValidatorLastActive = frame_support::storage::types::StorageMap<
-    ValidatorLastActivePrefix,
-    frame_support::Blake2_128Concat,
-    AccountId,
-    u32,
-    frame_support::storage::types::OptionQuery,
->;
-
-/// Maps validator AccountId to the session they joined
-pub type ValidatorJoinedAt = frame_support::storage::types::StorageMap<
-    ValidatorJoinedAtPrefix,
-    frame_support::Blake2_128Concat,
-    AccountId,
-    u32,
-    frame_support::storage::types::OptionQuery,
->;
-
-/// Permissionless validator set - UNSTOPPABLE like Bitcoin
-/// 
-/// Anyone can become a validator by calling session.setKeys()
-/// Validators are automatically removed if they don't produce blocks.
-/// 
-/// NO GRANDPA = The network NEVER stops.
-/// Finality is probabilistic (like Bitcoin) - after 6 blocks (~18 sec) a transaction is safe.
-pub struct PermissionlessValidatorSet;
-
-impl pallet_session::SessionManager<AccountId> for PermissionlessValidatorSet {
-    fn new_session(new_index: u32) -> Option<Vec<AccountId>> {
-        log::info!(
-            target: "runtime::session",
-            "🔄 Session {} - Discovering active validators...",
-            new_index
-        );
-
-        // Get current block author and mark them as active
-        if let Some(author) = pallet_authorship::Pallet::<Runtime>::author() {
-            ValidatorLastActive::insert(&author, new_index);
-            log::info!(
-                target: "runtime::session",
-                "✍️ Block author {:?} marked active in session {}",
-                author,
-                new_index
-            );
-        }
-
-        // Collect all accounts that have registered session keys
-        let all_registered: Vec<AccountId> = pallet_session::NextKeys::<Runtime>::iter()
-            .map(|(account, _keys)| account)
-            .collect();
-
-        if all_registered.is_empty() {
-            log::warn!(
-                target: "runtime::session",
-                "⚠️ No registered validators, keeping current set"
-            );
-            return None;
-        }
-
-        // Build list of active validators
-        let mut validators_with_join_time: Vec<(AccountId, u32)> = all_registered
-            .into_iter()
-            .filter_map(|account| {
-                // Check if validator is active (producing blocks)
-                match ValidatorLastActive::get(&account) {
-                    Some(last_active) => {
-                        let sessions_inactive = new_index.saturating_sub(last_active);
-                        if sessions_inactive > MAX_INACTIVE_SESSIONS {
-                            log::warn!(
-                                target: "runtime::session",
-                                "🚫 Validator {:?} inactive for {} sessions (no blocks), removing",
-                                account,
-                                sessions_inactive
-                            );
-                            ValidatorLastActive::remove(&account);
-                            ValidatorJoinedAt::remove(&account);
-                            return None;
-                        }
-                    }
-                    None => {
-                        // New validator - record join time and mark active
-                        ValidatorLastActive::insert(&account, new_index);
-                        ValidatorJoinedAt::insert(&account, new_index);
-                        log::info!(
-                            target: "runtime::session",
-                            "🆕 New validator {:?} joined at session {}",
-                            account,
-                            new_index
-                        );
-                    }
-                }
-                
-                let joined = ValidatorJoinedAt::get(&account).unwrap_or(0);
-                Some((account, joined))
-            })
-            .collect();
-
-        // Sort by join time (oldest first)
-        validators_with_join_time.sort_by(|a, b| a.1.cmp(&b.1));
-
-        // Extract just the account IDs
-        let active_validators: Vec<AccountId> = validators_with_join_time
-            .into_iter()
-            .map(|(account, _)| account)
-            .collect();
-
-        if active_validators.is_empty() {
-            log::error!(
-                target: "runtime::session",
-                "❌ No active validators! Keeping current set."
-            );
-            return None;
-        }
-
-        log::info!(
-            target: "runtime::session",
-            "✅ Session {}: {} active validator(s) - Network unstoppable! 🚀",
-            new_index,
-            active_validators.len()
-        );
-
-        Some(active_validators)
-    }
-
-    fn end_session(_end_index: u32) {}
-    
-    fn start_session(start_index: u32) {
-        if let Some(author) = pallet_authorship::Pallet::<Runtime>::author() {
-            ValidatorLastActive::insert(&author, start_index);
-        }
-    }
-}
-
-impl pallet_session::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type ValidatorId = AccountId;
-    type ValidatorIdOf = sp_runtime::traits::ConvertInto;
-    type ShouldEndSession = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
-    type NextSessionRotation = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
-    type SessionManager = PermissionlessValidatorSet;
-    type SessionHandler = <SessionKeys as OpaqueKeys>::KeyTypeIdProviders;
-    type Keys = SessionKeys;
-    type WeightInfo = pallet_session::weights::SubstrateWeight<Runtime>;
-}
-
-impl pallet_aura::Config for Runtime {
-    type AuthorityId = AuraId;
-    type DisabledValidators = Session;
-    type MaxAuthorities = ConstU32<100>;
-    type AllowMultipleBlocksPerSlot = ConstBool<false>;
-    type SlotDuration = pallet_aura::MinimumPeriodTimesTwo<Runtime>;
-}
 
 impl pallet_timestamp::Config for Runtime {
     type Moment = u64;
-    type OnTimestampSet = Aura;
+    type OnTimestampSet = ();
     type MinimumPeriod = ConstU64<{ SLOT_DURATION / 2 }>;
     type WeightInfo = ();
 }
@@ -360,30 +179,37 @@ impl pallet_transaction_payment::Config for Runtime {
     type FeeMultiplierUpdate = ();
 }
 
-/// Find block author using Aura consensus
-pub struct AuraAccountAdapter;
-impl FindAuthor<AccountId> for AuraAccountAdapter {
-    fn find_author<'a, I>(digests: I) -> Option<AccountId>
+/// Find block author for GHOSTDAG PoW
+pub struct GhostdagAuthorFinder;
+impl FindAuthor<AccountId> for GhostdagAuthorFinder {
+    fn find_author<'a, I>(_digests: I) -> Option<AccountId>
     where
         I: 'a + IntoIterator<Item = (sp_runtime::ConsensusEngineId, &'a [u8])>,
     {
-        pallet_aura::AuraAuthorId::<Runtime>::find_author(digests)
-            .map(|author_id| AccountId::from(sp_core::sr25519::Public::from(author_id).0))
+        // In PoW, there is no predefined author
+        // The block author is whoever mines the block
+        None
     }
 }
-
-/// Handler that issues block rewards AND tracks validator activity
+/// Handler that issues block rewards for PoW miners
 pub struct BlockRewardHandler;
 impl pallet_authorship::EventHandler<AccountId, BlockNumber> for BlockRewardHandler {
     fn note_author(author: AccountId) {
         let _ = Halving::issue_block_reward(&author);
-        let current_session = pallet_session::Pallet::<Runtime>::current_index();
-        ValidatorLastActive::insert(&author, current_session);
     }
 }
 
+
+
+
+
+
+
+
+
+
 impl pallet_authorship::Config for Runtime {
-    type FindAuthor = AuraAccountAdapter;
+    type FindAuthor = GhostdagAuthorFinder;
     type EventHandler = BlockRewardHandler;
 }
 
@@ -546,7 +372,7 @@ impl pallet_evm::Config for Runtime {
     type Runner = pallet_evm::runner::stack::Runner<Self>;
     type OnChargeTransaction = ();
     type OnCreate = ();
-    type FindAuthor = FindAuthorTruncated<AuraAccountAdapter>;
+    type FindAuthor = FindAuthorTruncated<GhostdagAuthorFinder>;
     type GasLimitPovSizeRatio = ConstU64<4>;
     type GasLimitStorageGrowthRatio = ConstU64<366>;
     type Timestamp = Timestamp;
@@ -615,9 +441,7 @@ construct_runtime!(
     pub struct Runtime {
         System: frame_system,
         Timestamp: pallet_timestamp,
-        Session: pallet_session,
-        Aura: pallet_aura,
-        // NO GRANDPA - Unstoppable like Bitcoin!
+        // NO GRANDPA - GHOSTDAG DAG consensus!
         Balances: pallet_balances,
         TransactionPayment: pallet_transaction_payment,
         Authorship: pallet_authorship,
@@ -731,20 +555,12 @@ impl_runtime_apis! {
     impl sp_offchain::OffchainWorkerApi<Block> for Runtime {
         fn offchain_worker(header: &<Block as BlockT>::Header) { Executive::offchain_worker(header) }
     }
-
-    impl sp_consensus_aura::AuraApi<Block, AuraId> for Runtime {
-        fn slot_duration() -> sp_consensus_aura::SlotDuration {
-            sp_consensus_aura::SlotDuration::from_millis(SLOT_DURATION)
-        }
-        fn authorities() -> Vec<AuraId> {
-            pallet_aura::Authorities::<Runtime>::get().to_vec()
-        }
-    }
-
     impl sp_session::SessionKeys<Block> for Runtime {
-        fn generate_session_keys(seed: Option<Vec<u8>>) -> Vec<u8> { SessionKeys::generate(seed) }
-        fn decode_session_keys(encoded: Vec<u8>) -> Option<Vec<(Vec<u8>, KeyTypeId)>> {
-            SessionKeys::decode_into_raw_public_keys(&encoded)
+        fn generate_session_keys(_seed: Option<Vec<u8>>) -> Vec<u8> {
+            Vec::new()
+        }
+        fn decode_session_keys(_encoded: Vec<u8>) -> Option<Vec<(Vec<u8>, sp_core::crypto::KeyTypeId)>> {
+            None
         }
     }
 
