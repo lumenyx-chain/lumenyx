@@ -262,13 +262,19 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> Verifier<Block> for Ghost
         
         let ghostdag_data = self.process_ghostdag(block_h256, parent_h256, extra_parents)?;
 
-        // CRITICAL: Use Custom fork choice based on blue_work
-        // Instead of LongestChain, we tell Substrate to use Custom
-        // and handle selection in GhostdagSelectChain
-        // Let SelectChain decide best via blue_work comparison
-        block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(
-            false // Import block but dont force as best - SelectChain will decide
-        ));
+        // CRITICAL: Compare blue_work with current best to decide fork choice
+        // Only set Custom(true) if this block has more blue_work than current best
+        let current_best_hash = self.client.info().best_hash;
+        let current_best_h256 = H256::from_slice(current_best_hash.as_ref());
+        let current_best_work = self.ghostdag_store.get_ghostdag_data(&current_best_h256)
+            .map(|d| d.blue_work)
+            .unwrap_or(0);
+        
+        // This block becomes best if it has more blue_work, or same work but lower hash (tie-breaker)
+        let is_better = ghostdag_data.blue_work > current_best_work || 
+            (ghostdag_data.blue_work == current_best_work && block_h256 < current_best_h256);
+        
+        block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(is_better));
 
         Ok(block)
     }
