@@ -1,35 +1,18 @@
 //! ZK Cryptographic Primitives for LUMENYX Privacy
 //!
-//! Uses Blake2b for Merkle tree (simple, fast, secure)
+//! Uses Poseidon hash for Merkle tree (ZK-friendly)
 //! Groth16 verification for ZK proofs
 
 use sp_core::H256;
-use sp_io::hashing::blake2_256;
+use crate::bn254::{poseidon_hash_pair, h256_to_fp, fp_to_h256, Fp};
 
-/// Hash two H256 values together using Blake2 (for Merkle tree)
-/// This MUST match the off-chain Python implementation
+/// Hash two H256 values together using Poseidon (for Merkle tree)
+/// This MUST match the off-chain ZK circuit implementation
 pub fn hash_pair(left: H256, right: H256) -> H256 {
-    let mut data = [0u8; 64];
-    data[..32].copy_from_slice(left.as_bytes());
-    data[32..].copy_from_slice(right.as_bytes());
-    H256::from(blake2_256(&data))
-}
-
-/// Hash inputs for commitment: Blake2(amount || secret || blinding)
-pub fn hash_commitment(amount: u128, secret: H256, blinding: H256) -> H256 {
-    let mut data = [0u8; 80]; // 16 + 32 + 32
-    data[..16].copy_from_slice(&amount.to_le_bytes());
-    data[16..48].copy_from_slice(secret.as_bytes());
-    data[48..80].copy_from_slice(blinding.as_bytes());
-    H256::from(blake2_256(&data))
-}
-
-/// Hash for nullifier: Blake2(commitment || secret)
-pub fn hash_nullifier(commitment: H256, secret: H256) -> H256 {
-    let mut data = [0u8; 64];
-    data[..32].copy_from_slice(commitment.as_bytes());
-    data[32..].copy_from_slice(secret.as_bytes());
-    H256::from(blake2_256(&data))
+    let left_fp = h256_to_fp(left).unwrap_or_else(|| Fp::from_bytes(&[0u8; 32]).unwrap());
+    let right_fp = h256_to_fp(right).unwrap_or_else(|| Fp::from_bytes(&[0u8; 32]).unwrap());
+    let result = poseidon_hash_pair(left_fp, right_fp);
+    fp_to_h256(&result)
 }
 
 /// Groth16 ZK Proof Verifier
