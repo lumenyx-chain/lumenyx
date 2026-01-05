@@ -1,6 +1,6 @@
 //! ZK Cryptographic Primitives for LUMENYX Privacy
 //!
-//! v3.0: Merkle hashing moved OFF-CHAIN
+//! ZK Cryptographic Primitives
 //! On-chain only verifies Groth16 proofs
 
 use sp_core::H256;

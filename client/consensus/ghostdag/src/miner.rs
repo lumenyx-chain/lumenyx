@@ -270,7 +270,7 @@ impl<C: sc_client_api::AuxStore + Send + Sync + 'static> GhostdagMiner<C> {
             let current = *self.current_difficulty.read();
             
             // Placeholder: adjust based on recent block rate
-            // TODO: Implement proper DAA based on timestamps
+            // Difficulty adjustment
             let new_difficulty = current; // Keep same for now
             
             *self.current_difficulty.write() = new_difficulty;

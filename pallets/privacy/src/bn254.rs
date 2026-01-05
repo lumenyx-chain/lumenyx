@@ -231,7 +231,7 @@ pub fn poseidon_hash(inputs: &[Fp]) -> Fp {
         let x2 = state.square();
         let x4 = x2.square();
         state = x4.mul(&state);
-        // Add round constant (i + 1) - FIXED!
+        // Add round constant
         let rc = Fp::from_u64((i + 1) as u64);
         state = state.add(&rc);
     }

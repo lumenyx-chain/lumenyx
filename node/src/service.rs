@@ -1,6 +1,5 @@
 //! LUMENYX Service Configuration - GHOSTDAG PoW with proper fork choice
 //!
-//! Key changes from previous version:
 //! 1. Uses GhostdagSelectChain instead of LongestChain
 //! 2. Verifier processes blocks through GHOSTDAG (calculates blue_score/blue_work)
 //! 3. Fork choice based on blue_work, not block number
@@ -171,7 +170,7 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
             return Ok(genesis_data);
         }
 
-        // CRITICAL FIX (as per ChatGPT/Grok advice):
+        // Block proposer timeout configuration
         // Verify the primary parent exists in our GHOSTDAG store
         // If not, return UnknownParent error - Substrate sync will request it
         if self.ghostdag_store.get_ghostdag_data(&parent_hash).is_none() {

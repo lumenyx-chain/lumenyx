@@ -1,9 +1,7 @@
-//! # LUMENYX Privacy Pallet v3.0 - Optimized ZK Privacy
+//! LUMENYX Privacy Pallet
 //!
 //! Provides optional privacy using Groth16 ZK proofs with FULL on-chain verification.
 //!
-//! ## v3.0 Changes
-//! - OPTIMIZED: Merkle root calculated OFF-CHAIN by user
 //! - On-chain only stores commitments and validates roots
 //! - Zero Poseidon hashing on-chain = instant shield transactions
 //! - Works on any hardware (even 1GB RAM VPS)
