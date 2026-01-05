@@ -37,7 +37,7 @@ use frame_support::{
     construct_runtime, derive_impl,
     genesis_builder_helper::{build_state, get_preset},
     parameter_types,
-    traits::{ConstU32, ConstU64, ConstU8, FindAuthor, OnFinalize, ConstBool},
+    traits::{ConstU32, ConstU64, ConstU8, ConstU128, FindAuthor, OnFinalize, ConstBool},
     weights::{constants::WEIGHT_REF_TIME_PER_SECOND, Weight},
 };
 use pallet_transaction_payment::FungibleAdapter;
@@ -184,8 +184,8 @@ impl pallet_transaction_payment::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type OnChargeTransaction = FungibleAdapter<Balances, ToAuthor>;
     type OperationalFeeMultiplier = ConstU8<5>;
-    type WeightToFee = frame_support::weights::IdentityFee<Balance>;
-    type LengthToFee = frame_support::weights::IdentityFee<Balance>;
+    type WeightToFee = frame_support::weights::ConstantMultiplier<Balance, ConstU128<1>>;
+    type LengthToFee = frame_support::weights::ConstantMultiplier<Balance, ConstU128<1>>;
     type FeeMultiplierUpdate = ();
 }
 
