@@ -1,5 +1,5 @@
 //! GHOSTDAG Algorithm - Blue set selection and mergeset computation
-//! Based on Kaspa's GHOSTDAG protocol
+//! GHOSTDAG protocol implementation
 
 use sp_core::H256;
 use std::collections::{HashSet, HashMap, BinaryHeap};

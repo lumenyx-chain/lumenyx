@@ -264,7 +264,7 @@ impl<C: sc_client_api::AuxStore + Send + Sync + 'static> GhostdagMiner<C> {
         };
 
         // Simple difficulty adjustment
-        // In production, use Kaspa's DAA (difficulty adjustment algorithm)
+        // Difficulty adjustment
         let blue_score = data.blue_score;
         if blue_score > 0 && blue_score % self.config.difficulty_window == 0 {
             let current = *self.current_difficulty.read();

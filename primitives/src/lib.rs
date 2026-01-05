@@ -44,13 +44,13 @@ pub const BLOCKS_PER_HALVING: u32 = 126_230_400;
 pub const MINIMUM_BLOCK_REWARD: u128 = 1;
 
 /// Base fee for simple transfer: ~0.00000005 LUMENYX
-pub const BASE_TRANSFER_FEE: u128 = 50_000;
+pub const BASE_TRANSFER_FEE: u128 = 1_000_000;
 
 /// Fee for smart contract execution
-pub const BASE_CONTRACT_FEE: u128 = 500_000;
+pub const BASE_CONTRACT_FEE: u128 = 10_000_000;
 
 /// Fee for privacy (ZK) transaction
-pub const BASE_PRIVACY_FEE: u128 = 5_000_000;
+pub const BASE_PRIVACY_FEE: u128 = 100_000_000;
 
 /// Minimum stake to become validator: 1 LUMENYX
 pub const MIN_VALIDATOR_STAKE: u128 = 1 * LUMENYX;

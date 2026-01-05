@@ -166,7 +166,7 @@ impl pallet_balances::Config for Runtime {
 }
 
 parameter_types! {
-    pub const TransactionByteFee: Balance = 50_000;
+    pub const TransactionByteFee: Balance = 1_000_000;
     pub FeeMultiplier: sp_runtime::FixedU128 = sp_runtime::FixedU128::from_u32(1);
 }
 

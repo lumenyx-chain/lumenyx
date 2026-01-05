@@ -6,7 +6,7 @@
 //! - Topological ordering for execution
 //! - PoW mining with 1-3 second block time
 //!
-//! Based on Kaspa's GHOSTDAG: https://github.com/kaspanet/rusty-kaspa
+//! GHOSTDAG DAG-based consensus
 
 pub mod store;
 use sp_runtime::traits::Header;
@@ -30,7 +30,7 @@ use parity_scale_codec::{Decode, Encode};
 
 /// GHOSTDAG K parameter (anticone size limit)
 /// Higher K = more parallelism, lower security
-/// Kaspa uses K=18 for ~1 second blocks
+/// K=18 recommended for ~1 second blocks
 pub const DEFAULT_K: u64 = 18;
 
 /// Maximum parents per block
@@ -217,7 +217,7 @@ impl<C: AuxStore + Send + Sync + 'static> GhostdagConsensus<C> {
     }
 
     /// Finality check - block is "final" after enough blue score
-    /// Similar to confirmations in Bitcoin
+    /// Confirmation score
     pub fn is_final(&self, block: &H256, confirmations: u64) -> bool {
         let Some(block_data) = self.store.get_ghostdag_data(block) else {
             return false;

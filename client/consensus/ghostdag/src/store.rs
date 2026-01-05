@@ -16,7 +16,7 @@ fn key(tag: &str, h: &H256) -> Vec<u8> {
     k
 }
 
-/// GHOSTDAG data for each block - matches Kaspa's GhostdagData
+/// GHOSTDAG data for each block - GHOSTDAG block data
 #[derive(Clone, Encode, Decode, Debug, Default, PartialEq, Eq)]
 pub struct GhostdagData {
     /// Blue score (number of blue blocks in past)
