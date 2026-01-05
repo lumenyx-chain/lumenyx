@@ -20,6 +20,7 @@ use sc_executor::WasmExecutor;
 use sc_service::{
     error::Error as ServiceError, Configuration, TaskManager, TFullBackend, TFullClient,
 };
+use sc_transaction_pool_api::TransactionPool;
 use sc_telemetry::{Telemetry, TelemetryWorker};
 use sp_consensus::{BlockOrigin, SelectChain, SyncOracle};
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT};
@@ -570,6 +571,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         let block_import = client.clone();
         let select_chain_mining = select_chain.clone();
         let mining_sync_service = sync_service.clone();
+        let mining_tx_pool = transaction_pool.clone();
 
         task_manager.spawn_handle().spawn_blocking(
             "ghostdag-miner",
@@ -578,6 +580,8 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 let mut interval = tokio::time::interval(Duration::from_millis(TARGET_BLOCK_TIME_MS));
                 let difficulty = INITIAL_DIFFICULTY;
                 let target = difficulty_to_target(difficulty);
+                let mut consecutive_propose_failures: u32 = 0;
+                const MAX_FAILURES_BEFORE_POOL_CLEAR: u32 = 3;
 
                 loop {
                     // KASPA-STYLE: Only pause if no peers (isolated node)
@@ -656,7 +660,17 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     ).await {
                         Ok(p) => p,
                         Err(e) => {
-                            log::warn!("Failed to propose block: {:?}", e);
+                            consecutive_propose_failures += 1;
+                            log::warn!("⚠️ Failed to propose block ({}/{} failures): {:?}", consecutive_propose_failures, MAX_FAILURES_BEFORE_POOL_CLEAR, e);
+                            if consecutive_propose_failures >= MAX_FAILURES_BEFORE_POOL_CLEAR {
+                                log::warn!("🧹 Too many propose failures - clearing transaction pool to recover");
+                                let pending: Vec<_> = mining_tx_pool.ready().map(|tx| tx.hash.clone()).collect();
+                                for hash in pending {
+                                    let _ = mining_tx_pool.remove_invalid(&[hash]);
+                                }
+                                consecutive_propose_failures = 0;
+                            }
+                            tokio::time::sleep(Duration::from_millis(500)).await;
                             continue;
                         }
                     };
@@ -750,6 +764,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                                         blue_work,
                                         all_parents.len()
                                     );
+                                    consecutive_propose_failures = 0; // Reset on success
                                 }
                                 Err(e) => {
                                     log::error!("❌ Failed to import block: {:?}", e);
