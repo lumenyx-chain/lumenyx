@@ -201,7 +201,9 @@ pub mod pallet {
             Commitments::<T>::insert(idx, commitment);
             
             // INCREMENTAL Merkle root update - O(depth) instead of O(2^depth)!
+            sp_runtime::print("shield: START insert_leaf");
             let new_root = Self::insert_leaf(idx, commitment);
+            sp_runtime::print("shield: END insert_leaf");
             CurrentMerkleRoot::<T>::put(new_root);
             KnownRoots::<T>::insert(new_root, true);
             

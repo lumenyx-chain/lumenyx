@@ -596,7 +596,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     // Get best block from GHOSTDAG select chain
                     log::debug!("🔍 step=best_chain START");
                     let best_header = match tokio::time::timeout(
-                        Duration::from_secs(5),
+                        Duration::from_secs(10),
                         select_chain_mining.best_chain()
                     ).await {
                         Ok(Ok(h)) => {
@@ -619,7 +619,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     // Get all tips for multi-parent block
                     log::debug!("🔍 step=leaves START");
                     let tips = match tokio::time::timeout(
-                        Duration::from_secs(5),
+                        Duration::from_secs(10),
                         select_chain_mining.leaves()
                     ).await {
                         Ok(Ok(t)) => {
@@ -656,7 +656,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     // Create proposer
                     log::debug!("🔍 step=proposer_init START");
                     let proposer = match tokio::time::timeout(
-                        Duration::from_secs(5),
+                        Duration::from_secs(10),
                         proposer_factory.init(&best_header)
                     ).await {
                         Ok(Ok(p)) => {
@@ -687,11 +687,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
                     log::debug!("🔍 step=propose START");
                     let proposal = match tokio::time::timeout(
-                        Duration::from_secs(5),
+                        Duration::from_secs(10),
                         proposer.propose(
                             inherent_data,
                             sp_runtime::generic::Digest { logs: digest_logs },
-                            Duration::from_millis(500),
+                            Duration::from_millis(3000),
                             None,
                         )
                     ).await {
