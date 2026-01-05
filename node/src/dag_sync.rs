@@ -9,17 +9,19 @@ use codec::Decode;
 use sp_core::H256;
 use parking_lot::Mutex;
 
-use sc_network::{NetworkService, PeerId};
+use sc_network::{NetworkRequest, PeerId, IfDisconnected};
+use sc_network::service::traits::NetworkService;
 use sp_runtime::traits::Block as BlockT;
 
 use lumenyx_runtime::opaque::Block;
-use crate::dag_protocol::{request_blocks_by_hash, DagResp, SignedBlock};
+use crate::dag_protocol::{DagResp, SignedBlock, DAG_BLOCKS_PROTO, DagReq};
+use codec::Encode;
 
 const MAX_ORPHANS: usize = 20_000;
 const MAX_BATCH: usize = 64;
 
 pub struct DagSync {
-    network: Arc<NetworkService<Block, <Block as BlockT>::Hash>>,
+    network: Arc<dyn NetworkService>,
 
     // child_hash -> (child_block, missing parents)
     orphans: Mutex<HashMap<H256, (SignedBlock, HashSet<H256>)>>,
@@ -40,7 +42,7 @@ pub struct DagSync {
 
 impl DagSync {
     pub fn new(
-        network: Arc<NetworkService<Block, <Block as BlockT>::Hash>>,
+        network: Arc<dyn NetworkService>,
         reinject: Arc<dyn Fn(SignedBlock) + Send + Sync>,
     ) -> Self {
         Self {
@@ -114,8 +116,16 @@ impl DagSync {
 
             // Non bloccare verify/import - spawn task
             tokio::spawn(async move {
-                match request_blocks_by_hash(net, peer2, hashes).await {
-                    Ok(resp_bytes) => {
+                let payload = DagReq::GetBlocks { hashes }.encode();
+                
+                match net.request(
+                    peer2.into(),
+                    DAG_BLOCKS_PROTO.into(),
+                    payload,
+                    None,
+                    IfDisconnected::ImmediateError,
+                ).await {
+                    Ok((resp_bytes, _protocol)) => {
                         if let Ok(resp) = DagResp::decode(&mut &resp_bytes[..]) {
                             match resp {
                                 DagResp::Blocks { blocks } => {

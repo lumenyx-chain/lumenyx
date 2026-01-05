@@ -28,7 +28,8 @@ use sp_api::ProvideRuntimeApi;
 // GHOSTDAG imports
 use sc_consensus_ghostdag::{GhostdagStore, GhostdagData};
 use crate::orphan_pool::{OrphanPool, OrphanBlock, SharedOrphanPool, new_shared_orphan_pool};
-use crate::dag_protocol::{SignedBlock, register_dag_blocks_protocol, run_dag_blocks_server};
+use crate::dag_protocol::{SignedBlock, register_dag_blocks_protocol, run_dag_blocks_server, DagResp};
+use crate::dag_sync::DagSync;
 
 // Custom select chain
 use crate::ghostdag_select::GhostdagSelectChain;
@@ -497,11 +498,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         log::info!("🔷 GHOSTDAG genesis initialized: {:?}", genesis_h256);
     }
 
-    let net_config = sc_network::config::FullNetworkConfiguration::<
+    let mut net_config = sc_network::config::FullNetworkConfiguration::<
         Block,
         <Block as BlockT>::Hash,
         sc_network::NetworkWorker<Block, <Block as BlockT>::Hash>,
     >::new(&config.network, config.prometheus_registry().cloned());
+    let dag_inbound_rx = crate::dag_protocol::register_dag_blocks_protocol(&mut net_config);
 
     let metrics = sc_network::NotificationMetrics::new(config.prometheus_registry());
 
@@ -518,6 +520,68 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             block_relay: None,
             metrics,
         })?;
+
+    // ============================================
+    // DAG SYNC INTEGRATION
+    // ============================================
+    
+    // 1. Spawn DAG blocks server (handles incoming requests)
+    task_manager.spawn_handle().spawn(
+        "dag-blocks-server",
+        None,
+        crate::dag_protocol::run_dag_blocks_server(dag_inbound_rx, client.clone()),
+    );
+    
+    // 2. Create reinject channel and DagSync
+    let (reinject_tx, reinject_rx) = async_channel::bounded::<SignedBlock>(1024);
+    let reinject_fn: Arc<dyn Fn(SignedBlock) + Send + Sync> = Arc::new({
+        let tx = reinject_tx.clone();
+        move |sb| { let _ = tx.try_send(sb); }
+    });
+    let dag_sync = Arc::new(DagSync::new(network.clone(), reinject_fn));
+    
+    // 3. Peer hint via event_stream
+    let dag_sync_peer = dag_sync.clone();
+    let mut ev = network.event_stream("dag-sync");
+    task_manager.spawn_handle().spawn("dag-peer-hint", None, async move {
+        use futures::StreamExt;
+        while let Some(e) = ev.next().await {
+            if let sc_network::Event::NotificationStreamOpened { remote, .. } = e {
+                dag_sync_peer.note_peer(remote.into());
+            }
+        }
+    });
+    
+    // 4. Reinject importer task
+    let block_import_reinject = client.clone();
+    task_manager.spawn_handle().spawn("dag-reinject", None, async move {
+        while let Ok(sb) = reinject_rx.recv().await {
+            log::info!("📥 Reinjecting orphan block {:?}", sb.block.hash());
+            let header = sb.block.header().clone();
+            let body = sb.block.extrinsics().to_vec();
+            let mut params = sc_consensus::BlockImportParams::new(
+                sp_consensus::BlockOrigin::NetworkBroadcast, 
+                header
+            );
+            params.body = Some(body);
+            params.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(false));
+            let _ = block_import_reinject.import_block(params).await;
+        }
+    });
+    
+    // 5. Hook import notifications to unblock orphans
+    let dag_sync_import = dag_sync.clone();
+    let mut import_stream = client.import_notification_stream();
+    task_manager.spawn_handle().spawn("dag-import-hook", None, async move {
+        use futures::StreamExt;
+        while let Some(n) = import_stream.next().await {
+            let h = sp_core::H256::from_slice(n.hash.as_ref());
+            dag_sync_import.on_block_imported(h);
+        }
+    });
+    
+    log::info!("🔷 DAG Sync initialized");
+
 
     let role = config.role;
     let force_authoring = config.force_authoring;
