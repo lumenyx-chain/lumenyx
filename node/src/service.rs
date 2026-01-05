@@ -732,6 +732,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 loop {
                     // KASPA-STYLE: Only pause if no peers (isolated node)
                     // GHOSTDAG handles convergence via blue_work - dont block based on block number
+                    if mining_sync_service.is_major_syncing() {
+                        log::debug!("⏸️  Major syncing - pausing mining...");
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                        continue;
+                    }
                     if mining_sync_service.num_connected_peers() == 0 {
                         log::debug!("⏸️  No peers - waiting for connection...");
                         tokio::time::sleep(Duration::from_millis(500)).await;
