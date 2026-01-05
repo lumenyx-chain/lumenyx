@@ -919,24 +919,33 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                             } else {
                                 vec![]
                             };
-                            
                             let mut all_parents = vec![parent_h256];
                             all_parents.extend(extra_parents.iter().cloned());
-                            
+                            // Find selected parent (highest blue_work, deterministic tie-break)
                             let selected_parent = all_parents.iter()
                                 .filter_map(|p| mining_store.get_ghostdag_data(p).map(|d| (*p, d.blue_work)))
-                                .max_by_key(|(_, w)| *w)
+                                .max_by(|a, b| {
+                                    match a.1.cmp(&b.1) {
+                                        std::cmp::Ordering::Equal => b.0.cmp(&a.0),
+                                        other => other,
+                                    }
+                                })
                                 .map(|(h, _)| h)
                                 .unwrap_or(parent_h256);
-                            
                             let parent_data = mining_store.get_ghostdag_data(&selected_parent)
                                 .unwrap_or_default();
-                            
-                            let mergeset_blues: Vec<H256> = all_parents.iter()
+                            // Mergeset blues with DETERMINISTIC ordering (blue_work DESC, hash ASC)
+                            let mut mergeset_with_work: Vec<(H256, u128)> = all_parents.iter()
                                 .filter(|p| **p != selected_parent)
-                                .filter(|p| mining_store.get_ghostdag_data(p).is_some())
-                                .cloned()
+                                .filter_map(|p| mining_store.get_ghostdag_data(p).map(|d| (*p, d.blue_work)))
                                 .collect();
+                            mergeset_with_work.sort_by(|a, b| {
+                                match b.1.cmp(&a.1) {
+                                    std::cmp::Ordering::Equal => a.0.cmp(&b.0),
+                                    other => other,
+                                }
+                            });
+                            let mergeset_blues: Vec<H256> = mergeset_with_work.into_iter().map(|(h, _)| h).collect();
                             
                             let blue_score = parent_data.blue_score + 1 + mergeset_blues.len() as u64;
                             let blue_work = parent_data.blue_work + 1 + mergeset_blues.len() as u128;
