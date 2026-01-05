@@ -594,10 +594,21 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     interval.tick().await;
 
                     // Get best block from GHOSTDAG select chain
-                    let best_header = match select_chain_mining.best_chain().await {
-                        Ok(h) => h,
-                        Err(e) => {
+                    log::debug!("🔍 step=best_chain START");
+                    let best_header = match tokio::time::timeout(
+                        Duration::from_secs(5),
+                        select_chain_mining.best_chain()
+                    ).await {
+                        Ok(Ok(h)) => {
+                            log::debug!("🔍 step=best_chain OK");
+                            h
+                        },
+                        Ok(Err(e)) => {
                             log::warn!("Failed to get best chain: {:?}", e);
+                            continue;
+                        }
+                        Err(_) => {
+                            log::error!("❌ best_chain TIMEOUT >5s - possible deadlock!");
                             continue;
                         }
                     };
@@ -606,9 +617,20 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     let parent_number = *best_header.number();
 
                     // Get all tips for multi-parent block
-                    let tips = match select_chain_mining.leaves().await {
-                        Ok(t) => t,
-                        Err(_) => vec![parent_hash],
+                    log::debug!("🔍 step=leaves START");
+                    let tips = match tokio::time::timeout(
+                        Duration::from_secs(5),
+                        select_chain_mining.leaves()
+                    ).await {
+                        Ok(Ok(t)) => {
+                            log::debug!("🔍 step=leaves OK");
+                            t
+                        },
+                        Ok(Err(_)) => vec![parent_hash],
+                        Err(_) => {
+                            log::error!("❌ leaves TIMEOUT >5s - possible deadlock!");
+                            vec![parent_hash]
+                        }
                     };
 
                     // Select parents: best + other tips (up to MAX_PARENTS)
@@ -632,10 +654,21 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     };
 
                     // Create proposer
-                    let proposer = match proposer_factory.init(&best_header).await {
-                        Ok(p) => p,
-                        Err(e) => {
+                    log::debug!("🔍 step=proposer_init START");
+                    let proposer = match tokio::time::timeout(
+                        Duration::from_secs(5),
+                        proposer_factory.init(&best_header)
+                    ).await {
+                        Ok(Ok(p)) => {
+                            log::debug!("🔍 step=proposer_init OK");
+                            p
+                        },
+                        Ok(Err(e)) => {
                             log::warn!("Failed to create proposer: {:?}", e);
+                            continue;
+                        }
+                        Err(_) => {
+                            log::error!("❌ proposer_init TIMEOUT >5s - possible deadlock!");
                             continue;
                         }
                     };
@@ -652,14 +685,21 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                         digest_logs.push(DigestItem::Other(parents_digest.encode()));
                     }
 
-                    let proposal = match proposer.propose(
-                        inherent_data,
-                        sp_runtime::generic::Digest { logs: digest_logs },
-                        Duration::from_millis(500),
-                        None,
+                    log::debug!("🔍 step=propose START");
+                    let proposal = match tokio::time::timeout(
+                        Duration::from_secs(5),
+                        proposer.propose(
+                            inherent_data,
+                            sp_runtime::generic::Digest { logs: digest_logs },
+                            Duration::from_millis(500),
+                            None,
+                        )
                     ).await {
-                        Ok(p) => p,
-                        Err(e) => {
+                        Ok(Ok(p)) => {
+                            log::debug!("🔍 step=propose OK");
+                            p
+                        },
+                        Ok(Err(e)) => {
                             consecutive_propose_failures += 1;
                             log::warn!("⚠️ Failed to propose block ({}/{} failures): {:?}", consecutive_propose_failures, MAX_FAILURES_BEFORE_POOL_CLEAR, e);
                             if consecutive_propose_failures >= MAX_FAILURES_BEFORE_POOL_CLEAR {
@@ -671,6 +711,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                                 consecutive_propose_failures = 0;
                             }
                             tokio::time::sleep(Duration::from_millis(500)).await;
+                            continue;
+                        }
+                        Err(_) => {
+                            log::error!("❌ propose TIMEOUT >5s - possible deadlock!");
+                            consecutive_propose_failures += 1;
                             continue;
                         }
                     };
