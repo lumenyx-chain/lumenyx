@@ -166,13 +166,23 @@ impl pallet_balances::Config for Runtime {
 }
 
 parameter_types! {
-    pub const TransactionByteFee: Balance = 100_000_000;
+    pub const TransactionByteFee: Balance = 50_000;
     pub FeeMultiplier: sp_runtime::FixedU128 = sp_runtime::FixedU128::from_u32(1);
+}
+
+pub struct ToAuthor;
+impl frame_support::traits::OnUnbalanced<frame_support::traits::fungible::Credit<AccountId, Balances>> for ToAuthor {
+    fn on_nonzero_unbalanced(credit: frame_support::traits::fungible::Credit<AccountId, Balances>) {
+        use frame_support::traits::fungible::Balanced;
+        if let Some(author) = pallet_authorship::Pallet::<Runtime>::author() {
+            let _ = <Balances as Balanced<AccountId>>::resolve(&author, credit);
+        }
+    }
 }
 
 impl pallet_transaction_payment::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
-    type OnChargeTransaction = FungibleAdapter<Balances, ()>;
+    type OnChargeTransaction = FungibleAdapter<Balances, ToAuthor>;
     type OperationalFeeMultiplier = ConstU8<5>;
     type WeightToFee = frame_support::weights::IdentityFee<Balance>;
     type LengthToFee = frame_support::weights::IdentityFee<Balance>;
