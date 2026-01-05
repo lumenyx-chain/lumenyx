@@ -1,15 +1,19 @@
-//! # LUMENYX Privacy Pallet v2.1 - Full ZK Privacy with BN254 Pairing
+//! # LUMENYX Privacy Pallet v2.2 - Full ZK Privacy with BN254 Pairing
 //!
 //! Provides optional privacy using Groth16 ZK proofs with FULL on-chain verification.
-//! 
+//!
 //! ## Security Model
 //! - Proof generation: off-chain (lumenyx-zk CLI with arkworks)
 //! - Proof verification: on-chain with REAL BN254 pairing (no trusted validators needed)
-//! 
+//!
 //! ## Cryptographic Components
 //! - BN254 elliptic curve arithmetic (Fp, Fp2, Fp6, Fp12 tower)
 //! - Optimal Ate pairing implementation
 //! - Full Groth16 verification equation: e(A,B) = e(α,β)·e(L,γ)·e(C,δ)
+//!
+//! ## v2.2 Changes
+//! - FIXED: Incremental Merkle tree (O(depth) instead of O(2^depth))
+//! - Scales to millions of users without blocking
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -62,25 +66,28 @@ pub mod pallet {
     use sp_runtime::traits::{Saturating, Zero};
     use sp_core::H256;
     use sp_std::vec::Vec;
-    
+
     use crate::zk::Groth16Verifier;
     use crate::HARDCODED_VK;
-    
+
     pub type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
-    
+
     pub type Commitment = H256;
     pub type Nullifier = H256;
     pub type MerkleRoot = H256;
     pub type Proof = BoundedVec<u8, ConstU32<256>>;
 
+    /// Maximum tree depth supported (20 levels = 1M leaves)
+    pub const MAX_DEPTH: u32 = 20;
+
     #[pallet::config]
     pub trait Config: frame_system::Config {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type Currency: Currency<Self::AccountId>;
-        
+
         #[pallet::constant]
         type TreeDepth: Get<u32>;
-        
+
         #[pallet::constant]
         type MaxNotes: Get<u32>;
     }
@@ -125,6 +132,12 @@ pub mod pallet {
     #[pallet::storage]
     pub type NoteCount<T: Config> = StorageValue<_, u64, ValueQuery>;
 
+    /// Filled subtrees for incremental Merkle tree
+    /// FilledSubtrees[level] = the last node at that level that was filled
+    #[pallet::storage]
+    #[pallet::getter(fn filled_subtrees)]
+    pub type FilledSubtrees<T: Config> = StorageMap<_, Twox64Concat, u32, H256, ValueQuery>;
+
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -162,45 +175,47 @@ pub mod pallet {
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         #[pallet::call_index(0)]
-        #[pallet::weight(Weight::from_parts(100_000, 0))]
+        #[pallet::weight(Weight::from_parts(50_000_000, 0))]  // Increased weight for safety
         pub fn shield(
             origin: OriginFor<T>,
             amount: BalanceOf<T>,
             commitment: Commitment,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            
+
             ensure!(amount > Zero::zero(), Error::<T>::ZeroAmount);
-            
+
             let idx = Self::next_index();
             ensure!(idx < T::MaxNotes::get(), Error::<T>::TreeFull);
-            
+
             ensure!(T::Currency::free_balance(&who) >= amount, Error::<T>::InsufficientBalance);
-            
+
             T::Currency::withdraw(
                 &who,
                 amount,
                 frame_support::traits::WithdrawReasons::TRANSFER,
                 frame_support::traits::ExistenceRequirement::KeepAlive,
             )?;
-            
+
             ShieldedPool::<T>::mutate(|p| *p = p.saturating_add(amount));
             Commitments::<T>::insert(idx, commitment);
-            NextIndex::<T>::put(idx + 1);
             
-            let new_root = Self::compute_merkle_root();
+            // INCREMENTAL Merkle root update - O(depth) instead of O(2^depth)!
+            let new_root = Self::insert_leaf(idx, commitment);
             CurrentMerkleRoot::<T>::put(new_root);
             KnownRoots::<T>::insert(new_root, true);
             
+            NextIndex::<T>::put(idx + 1);
+
             TotalShielded::<T>::mutate(|t| *t = t.saturating_add(amount));
             NoteCount::<T>::mutate(|n| *n = n.saturating_add(1));
-            
+
             Self::deposit_event(Event::Shielded { who, amount, commitment, leaf_index: idx });
             Ok(())
         }
 
         #[pallet::call_index(1)]
-        #[pallet::weight(Weight::from_parts(500_000, 0))]
+        #[pallet::weight(Weight::from_parts(500_000_000, 0))]  // High weight for ZK verification
         pub fn unshield(
             origin: OriginFor<T>,
             amount: BalanceOf<T>,
@@ -209,7 +224,7 @@ pub mod pallet {
             proof: Proof,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            
+
             ensure!(amount > Zero::zero(), Error::<T>::ZeroAmount);
             ensure!(
                 Self::merkle_root() == root || KnownRoots::<T>::get(root),
@@ -217,27 +232,27 @@ pub mod pallet {
             );
             ensure!(!SpentNullifiers::<T>::get(nullifier), Error::<T>::NullifierSpent);
             ensure!(Self::shielded_pool() >= amount, Error::<T>::InsufficientShieldedBalance);
-            
-            let vk: BoundedVec<u8, ConstU32<2048>> = HARDCODED_VK.to_vec().try_into().expect("VK fits"); // Hardcoded ZK key
+
+            let vk: BoundedVec<u8, ConstU32<2048>> = HARDCODED_VK.to_vec().try_into().expect("VK fits");
             ensure!(!vk.is_empty(), Error::<T>::NoVerificationKey);
-            
+
             let amount_u128: u128 = amount.try_into().unwrap_or(0);
             ensure!(
                 Groth16Verifier::verify_unshield(&vk, &proof, nullifier, root, amount_u128),
                 Error::<T>::InvalidProof
             );
-            
+
             SpentNullifiers::<T>::insert(nullifier, true);
             ShieldedPool::<T>::mutate(|p| *p = p.saturating_sub(amount));
             T::Currency::deposit_creating(&who, amount);
             TotalUnshielded::<T>::mutate(|t| *t = t.saturating_add(amount));
-            
+
             Self::deposit_event(Event::Unshielded { who, amount, nullifier });
             Ok(())
         }
 
         #[pallet::call_index(2)]
-        #[pallet::weight(Weight::from_parts(600_000, 0))]
+        #[pallet::weight(Weight::from_parts(600_000_000, 0))]  // High weight for ZK verification
         pub fn shielded_transfer(
             origin: OriginFor<T>,
             amount: BalanceOf<T>,
@@ -247,35 +262,37 @@ pub mod pallet {
             proof: Proof,
         ) -> DispatchResult {
             let _relay = ensure_signed(origin)?;
-            
+
             ensure!(amount > Zero::zero(), Error::<T>::ZeroAmount);
             ensure!(
                 Self::merkle_root() == root || KnownRoots::<T>::get(root),
                 Error::<T>::UnknownRoot
             );
             ensure!(!SpentNullifiers::<T>::get(nullifier), Error::<T>::NullifierSpent);
-            
+
             let idx = Self::next_index();
             ensure!(idx < T::MaxNotes::get(), Error::<T>::TreeFull);
-            
-            let vk: BoundedVec<u8, ConstU32<2048>> = HARDCODED_VK.to_vec().try_into().expect("VK fits"); // Hardcoded ZK key
+
+            let vk: BoundedVec<u8, ConstU32<2048>> = HARDCODED_VK.to_vec().try_into().expect("VK fits");
             ensure!(!vk.is_empty(), Error::<T>::NoVerificationKey);
-            
+
             let amount_u128: u128 = amount.try_into().unwrap_or(0);
             ensure!(
                 Groth16Verifier::verify_transfer(&vk, &proof, nullifier, new_commitment, root, amount_u128),
                 Error::<T>::InvalidProof
             );
-            
+
             SpentNullifiers::<T>::insert(nullifier, true);
             Commitments::<T>::insert(idx, new_commitment);
-            NextIndex::<T>::put(idx + 1);
             
-            let new_root = Self::compute_merkle_root();
+            // INCREMENTAL Merkle root update
+            let new_root = Self::insert_leaf(idx, new_commitment);
             CurrentMerkleRoot::<T>::put(new_root);
             KnownRoots::<T>::insert(new_root, true);
-            NoteCount::<T>::mutate(|n| *n = n.saturating_add(1));
             
+            NextIndex::<T>::put(idx + 1);
+            NoteCount::<T>::mutate(|n| *n = n.saturating_add(1));
+
             Self::deposit_event(Event::ShieldedTransfer { nullifier, new_commitment });
             Ok(())
         }
@@ -295,38 +312,51 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
-        fn compute_merkle_root() -> MerkleRoot {
-            let count = Self::next_index();
-            if count == 0 {
-                return H256::zero();
+        /// Get the zero hash for a given level
+        /// Level 0 = H256::zero() (empty leaf)
+        /// Level 1 = hash(zero, zero)
+        /// Level n = hash(zero_{n-1}, zero_{n-1})
+        fn zero_hash(level: u32) -> H256 {
+            let mut current = H256::zero();
+            for _ in 0..level {
+                current = crate::zk::hash_pair(current, current);
             }
-            
-            let depth = T::TreeDepth::get() as usize;
-            let size = 1usize << depth;
-            
-            let mut leaves: Vec<H256> = Vec::new();
-            for i in 0..count {
-                if let Some(c) = Commitments::<T>::get(i) {
-                    leaves.push(c);
-                }
+            current
+        }
+
+        /// Insert a leaf and update the Merkle root incrementally
+        /// This is O(depth) instead of O(2^depth)!
+        /// 
+        /// Algorithm:
+        /// - Start with the new leaf
+        /// - For each level, check if current index is even or odd
+        /// - If even: we're on the left, store current node as filled subtree, use zero hash for right
+        /// - If odd: we're on the right, combine with filled subtree from left
+        /// - Continue up to the root
+        fn insert_leaf(leaf_index: u32, leaf: H256) -> H256 {
+            let depth = T::TreeDepth::get();
+            let mut current_hash = leaf;
+            let mut current_index = leaf_index;
+
+            for level in 0..depth {
+                let (left, right) = if current_index % 2 == 0 {
+                    // We're on the left side
+                    // Store this hash as the filled subtree for this level
+                    FilledSubtrees::<T>::insert(level, current_hash);
+                    // Right sibling is a zero hash (empty subtree)
+                    (current_hash, Self::zero_hash(level))
+                } else {
+                    // We're on the right side
+                    // Left sibling is the filled subtree from storage
+                    let left_sibling = FilledSubtrees::<T>::get(level);
+                    (left_sibling, current_hash)
+                };
+
+                current_hash = crate::zk::hash_pair(left, right);
+                current_index /= 2;
             }
-            
-            while leaves.len() < size {
-                leaves.push(H256::zero());
-            }
-            
-            let mut current = leaves;
-            while current.len() > 1 {
-                let mut next = Vec::new();
-                for chunk in current.chunks(2) {
-                    let left = chunk[0];
-                    let right = if chunk.len() > 1 { chunk[1] } else { H256::zero() };
-                    next.push(crate::zk::hash_pair(left, right));
-                }
-                current = next;
-            }
-            
-            current.first().copied().unwrap_or(H256::zero())
+
+            current_hash
         }
     }
 }
