@@ -175,7 +175,7 @@ pub mod pallet {
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         #[pallet::call_index(0)]
-        #[pallet::weight(Weight::from_parts(50_000_000, 0))]  // Increased weight for safety
+        #[pallet::weight(Weight::from_parts(200_000_000, 0))]  // Optimized weight for Poseidon + Frontier
         pub fn shield(
             origin: OriginFor<T>,
             amount: BalanceOf<T>,
@@ -316,6 +316,9 @@ pub mod pallet {
         /// Level 0 = H256::zero() (empty leaf)
         /// Level 1 = hash(zero, zero)
         /// Level n = hash(zero_{n-1}, zero_{n-1})
+        /// Compute zero hash for a given level
+        /// Level 0 = hash(0, 0), Level n = hash(zero_{n-1}, zero_{n-1})
+        /// TODO: Precompute as constants for better performance
         fn zero_hash(level: u32) -> H256 {
             let mut current = H256::zero();
             for _ in 0..level {
@@ -324,39 +327,64 @@ pub mod pallet {
             current
         }
 
-        /// Insert a leaf and update the Merkle root incrementally
-        /// This is O(depth) instead of O(2^depth)!
+        /// Insert a leaf using optimized Frontier algorithm
         /// 
-        /// Algorithm:
-        /// - Start with the new leaf
-        /// - For each level, check if current index is even or odd
-        /// - If even: we're on the left, store current node as filled subtree, use zero hash for right
-        /// - If odd: we're on the right, combine with filled subtree from left
-        /// - Continue up to the root
+        /// Key optimizations vs previous version:
+        /// - Early break: stop as soon as we find an empty slot
+        /// - Average 1-2 writes instead of ~10 writes
+        /// - Uses binary carry logic (like incrementing a binary number)
         fn insert_leaf(leaf_index: u32, leaf: H256) -> H256 {
             let depth = T::TreeDepth::get();
-            let mut current_hash = leaf;
-            let mut current_index = leaf_index;
+            let mut node = leaf;
+            let mut idx = leaf_index;
 
+            // Phase 1: Update frontier with carry logic (early break!)
             for level in 0..depth {
-                let (left, right) = if current_index % 2 == 0 {
-                    // We're on the left side
-                    // Store this hash as the filled subtree for this level
-                    FilledSubtrees::<T>::insert(level, current_hash);
-                    // Right sibling is a zero hash (empty subtree)
-                    (current_hash, Self::zero_hash(level))
+                if (idx & 1) == 0 {
+                    // Even index = first empty slot at this level
+                    // Save node here and BREAK (no more carries needed)
+                    FilledSubtrees::<T>::insert(level, node);
+                    break;
                 } else {
-                    // We're on the right side
-                    // Left sibling is the filled subtree from storage
-                    let left_sibling = FilledSubtrees::<T>::get(level);
-                    (left_sibling, current_hash)
-                };
-
-                current_hash = crate::zk::hash_pair(left, right);
-                current_index /= 2;
+                    // Odd index = combine with left sibling from frontier
+                    let left = FilledSubtrees::<T>::get(level);
+                    node = crate::zk::hash_pair(left, node);
+                }
+                idx >>= 1;
             }
 
-            current_hash
+            // Phase 2: Compute root from frontier + zero hashes
+            Self::compute_root_from_frontier()
         }
+
+        /// Compute Merkle root from current frontier state
+        fn compute_root_from_frontier() -> H256 {
+            let depth = T::TreeDepth::get();
+            let next_idx = NextIndex::<T>::get();
+            
+            if next_idx == 0 {
+                return Self::zero_hash(depth);
+            }
+
+            let mut node: Option<H256> = None;
+
+            for level in 0..depth {
+                let left = if FilledSubtrees::<T>::contains_key(level) {
+                    Some(FilledSubtrees::<T>::get(level))
+                } else {
+                    None
+                };
+
+                node = match (left, node) {
+                    (Some(l), Some(r)) => Some(crate::zk::hash_pair(l, r)),
+                    (Some(l), None) => Some(crate::zk::hash_pair(l, Self::zero_hash(level))),
+                    (None, Some(r)) => Some(crate::zk::hash_pair(Self::zero_hash(level), r)),
+                    (None, None) => None,
+                };
+            }
+
+            node.unwrap_or_else(|| Self::zero_hash(depth))
+        }
+
     }
 }
