@@ -100,6 +100,25 @@ pub fn run() -> sc_cli::Result<()> {
             runner.sync_run(|config| cmd.run::<Block>(&config))
         }
         None => {
+            // Auto-create network key BEFORE create_runner
+            let base_path = match cli.run.shared_params.base_path() {
+                Ok(Some(bp)) => bp,
+                _ => sc_service::BasePath::from_project("", "", "lumenyx-node"),
+            };
+            let chain_id = cli.run.shared_params.chain_id(cli.run.shared_params.is_dev());
+            let chain_folder = match chain_id.as_str() {
+                "dev" => "lumenyx_dev",
+                "local" => "lumenyx_local_testnet",
+                _ => "lumenyx_mainnet",
+            };
+            let network_path = base_path.path().join("chains").join(chain_folder).join("network");
+            let _ = std::fs::create_dir_all(&network_path);
+            let secret_key_path = network_path.join("secret_ed25519");
+            if !secret_key_path.exists() {
+                use sp_core::Pair;
+                let keypair = sp_core::ed25519::Pair::generate().0;
+                let _ = std::fs::write(&secret_key_path, keypair.to_raw_vec());
+            }
             let runner = cli.create_runner(&cli.run)?;
             runner.run_node_until_exit(|config| async move {
                 service::new_full(config).map_err(sc_cli::Error::Service)

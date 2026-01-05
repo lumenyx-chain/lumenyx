@@ -16,7 +16,7 @@ use sc_network::{
 };
 
 use lumenyx_runtime::opaque::Block;
-use crate::service::FullClient;
+
 
 pub type SignedBlock = sp_runtime::generic::SignedBlock<Block>;
 type BlockHash = <Block as BlockT>::Hash;
@@ -54,11 +54,12 @@ pub fn register_dag_blocks_protocol(
     rx
 }
 
-/// Server-side handler
-pub async fn run_dag_blocks_server(
+pub async fn run_dag_blocks_server<C>(
     inbound_rx: async_channel::Receiver<IncomingRequest>,
-    client: Arc<FullClient>,
-) {
+    client: Arc<C>,
+) where
+    C: BlockBackend<Block> + Send + Sync + 'static,
+{
     while let Ok(req) = inbound_rx.recv().await {
         let resp_bytes = match DagReq::decode(&mut &req.payload[..]) {
             Ok(DagReq::GetBlocks { hashes }) => {
