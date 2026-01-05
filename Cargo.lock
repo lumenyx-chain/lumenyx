@@ -4622,6 +4622,7 @@ dependencies = [
  "pallet-transaction-payment-rpc",
  "pallet-transaction-payment-rpc-runtime-api",
  "parity-scale-codec",
+ "parking_lot 0.12.5",
  "sc-basic-authorship",
  "sc-chain-spec",
  "sc-cli",

@@ -27,6 +27,7 @@ use sp_api::ProvideRuntimeApi;
 
 // GHOSTDAG imports
 use sc_consensus_ghostdag::{GhostdagStore, GhostdagData};
+use crate::dag_sync::{DagOrphanPool, OrphanBlock, SharedOrphanPool, new_shared_orphan_pool};
 
 // Custom select chain
 use crate::ghostdag_select::GhostdagSelectChain;
@@ -134,21 +135,38 @@ fn hash_meets_target(hash: &H256, target: &H256) -> bool {
 pub struct GhostdagVerifier<C> {
     client: Arc<C>,
     ghostdag_store: GhostdagStore<C>,
+    /// DAG-aware orphan pool for blocks waiting for missing parents
+    orphan_pool: SharedOrphanPool,
 }
 
 impl<C> GhostdagVerifier<C> {
     pub fn new(client: Arc<C>) -> Self {
         let ghostdag_store = GhostdagStore::new(client.clone());
-        Self { client, ghostdag_store }
+        Self { 
+            client, 
+            ghostdag_store,
+            orphan_pool: new_shared_orphan_pool(),
+        }
     }
 }
 
 impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
+    /// Find which parents are missing from our DAG store
+    fn find_missing_parents(&self, all_parents: &[H256]) -> Vec<H256> {
+        all_parents
+            .iter()
+            .filter(|p| **p != H256::zero())
+            .filter(|p| self.ghostdag_store.get_ghostdag_data(p).is_none())
+            .cloned()
+            .collect()
+    }
+
     /// Process a block through GHOSTDAG
+    /// Returns Err("ORPHAN:...") if parents are missing - block should go to orphan pool
     fn process_ghostdag(&self, block_hash: H256, parent_hash: H256, extra_parents: Vec<H256>) -> Result<GhostdagData, String> {
         // Collect all parents (header parent + extra parents from digest)
         let mut all_parents = vec![parent_hash];
-        for p in extra_parents {
+        for p in extra_parents.clone() {
             if p != parent_hash && !all_parents.contains(&p) {
                 all_parents.push(p);
             }
@@ -158,7 +176,7 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
         if parent_hash == H256::zero() || all_parents.iter().all(|p| *p == H256::zero()) {
             let genesis_data = GhostdagData {
                 blue_score: 0,
-                blue_work: 1, // Genesis has work 1
+                blue_work: 1,
                 selected_parent: H256::zero(),
                 mergeset_blues: vec![],
                 mergeset_reds: vec![],
@@ -170,37 +188,49 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
             return Ok(genesis_data);
         }
 
-        // Block proposer timeout configuration
-        // Verify the primary parent exists in our GHOSTDAG store
-        // If not, return UnknownParent error - Substrate sync will request it
-        if self.ghostdag_store.get_ghostdag_data(&parent_hash).is_none() {
-            return Err(format!("UnknownParent: {:?} not in GHOSTDAG store", parent_hash));
+        // CRITICAL: Check for missing parents BEFORE processing
+        // This ensures topological ordering - we only process when ALL parents are known
+        let missing = self.find_missing_parents(&all_parents);
+        if !missing.is_empty() {
+            // Return special error format that verify() can parse
+            let missing_str: Vec<String> = missing.iter().map(|h| format!("{:?}", h)).collect();
+            return Err(format!("ORPHAN:{}", missing_str.join(",")));
         }
 
-        // Find selected parent (highest blue_work) - only from parents we HAVE
+        // All parents present! Find selected parent (highest blue_work, deterministic tie-break)
         let selected_parent = all_parents.iter()
             .filter_map(|p| {
                 self.ghostdag_store.get_ghostdag_data(p).map(|d| (*p, d.blue_work))
             })
             .max_by(|a, b| {
                 match a.1.cmp(&b.1) {
-                    std::cmp::Ordering::Equal => b.0.cmp(&a.0), // Lower hash wins tie
+                    std::cmp::Ordering::Equal => b.0.cmp(&a.0), // Lower hash wins tie (deterministic)
                     other => other,
                 }
             })
             .map(|(h, _)| h)
-            .ok_or_else(|| format!("UnknownParent: no valid parent found for {:?}", block_hash))?;
+            .ok_or_else(|| format!("NoParent: {:?}", block_hash))?;
 
-        // Get selected parent's data - MUST exist now
         let parent_data = self.ghostdag_store.get_ghostdag_data(&selected_parent)
-            .ok_or_else(|| format!("UnknownParent: selected parent {:?} missing", selected_parent))?;
+            .ok_or_else(|| format!("ParentMissing: {:?}", selected_parent))?;
 
-        // Mergeset: other parents that we have in our store become blues
-        let mergeset_blues: Vec<H256> = all_parents.iter()
+        // Mergeset blues with DETERMINISTIC ordering (blue_work DESC, hash ASC)
+        let mut mergeset_with_work: Vec<(H256, u128)> = all_parents.iter()
             .filter(|p| **p != selected_parent)
-            .filter(|p| self.ghostdag_store.get_ghostdag_data(p).is_some())
-            .cloned()
+            .filter_map(|p| {
+                self.ghostdag_store.get_ghostdag_data(p).map(|d| (*p, d.blue_work))
+            })
             .collect();
+        
+        // Sort: blue_work DESC, then hash ASC for determinism
+        mergeset_with_work.sort_by(|a, b| {
+            match b.1.cmp(&a.1) {
+                std::cmp::Ordering::Equal => a.0.cmp(&b.0),
+                other => other,
+            }
+        });
+        
+        let mergeset_blues: Vec<H256> = mergeset_with_work.into_iter().map(|(h, _)| h).collect();
 
         // Calculate blue_score and blue_work
         let blue_score = parent_data.blue_score + 1 + mergeset_blues.len() as u64;
@@ -220,11 +250,9 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
         self.ghostdag_store.store_parents(&block_hash, &all_parents)?;
         self.ghostdag_store.update_tips(&block_hash, &all_parents)?;
 
-        // Update children for each parent we have
+        // Update children tracking
         for parent in &all_parents {
-            if self.ghostdag_store.get_ghostdag_data(parent).is_some() {
-                let _ = self.ghostdag_store.add_child(parent, &block_hash);
-            }
+            let _ = self.ghostdag_store.add_child(parent, &block_hash);
         }
 
         log::info!(
@@ -235,6 +263,7 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
         Ok(data)
     }
 }
+
 
 #[async_trait::async_trait]
 impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> Verifier<Block> for GhostdagVerifier<C> {
@@ -250,32 +279,85 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> Verifier<Block> for Ghost
         for log in block.header.digest().logs() {
             if let DigestItem::Other(data) = log {
                 if let Ok(digest) = DagParentsDigest::decode(&mut &data[..]) {
-                    extra_parents = digest.parents;
+                    extra_parents = digest.parents.clone();
                     break;
                 }
             }
         }
 
-        // Process through GHOSTDAG
         let block_h256 = H256::from_slice(block_hash.as_ref());
         let parent_h256 = H256::from_slice(parent_hash.as_ref());
         
-        let ghostdag_data = self.process_ghostdag(block_h256, parent_h256, extra_parents)?;
-
-        // CRITICAL: Compare blue_work with current best to decide fork choice
-        // Only set Custom(true) if this block has more blue_work than current best
+        // Try to process through GHOSTDAG
+        let ghostdag_result = self.process_ghostdag(block_h256, parent_h256, extra_parents.clone());
+        
+        // Handle ORPHAN case - block has missing parents
+        let ghostdag_data = match ghostdag_result {
+            Ok(data) => data,
+            Err(e) if e.starts_with("ORPHAN:") => {
+                let missing_str = e.strip_prefix("ORPHAN:").unwrap_or("");
+                log::warn!(
+                    "🔶 Block {:?} has missing parents: {} - deferring",
+                    block_h256, missing_str
+                );
+                
+                // Collect all parents for orphan tracking
+                let mut all_parents = vec![parent_h256];
+                for p in &extra_parents {
+                    if *p != parent_h256 && !all_parents.contains(p) {
+                        all_parents.push(*p);
+                    }
+                }
+                
+                // Find which parents are actually missing
+                let missing_parents: Vec<H256> = all_parents.iter()
+                    .filter(|p| **p != H256::zero())
+                    .filter(|p| self.ghostdag_store.get_ghostdag_data(p).is_none())
+                    .cloned()
+                    .collect();
+                
+                // Add to orphan pool
+                let orphan = OrphanBlock {
+                    hash: block_h256,
+                    header_parent: parent_h256,
+                    all_parents: all_parents.clone(),
+                    block_data: vec![],
+                };
+                
+                {
+                    let mut pool = self.orphan_pool.write();
+                    let to_request = pool.add_orphan(orphan, missing_parents.clone());
+                    if !to_request.is_empty() {
+                        log::info!("📥 Need to request {} missing parent(s)", to_request.len());
+                    }
+                }
+                
+                // Return error to defer - Substrate will retry when parent arrives
+                return Err(format!("DeferredBlock: waiting for {} parents", missing_parents.len()));
+            },
+            Err(e) => return Err(e),
+        };
+        
+        // Block processed - check if orphans can now be processed
+        {
+            let mut pool = self.orphan_pool.write();
+            let ready = pool.parent_arrived(block_h256);
+            if !ready.is_empty() {
+                log::info!("🔷 {} orphan(s) ready after {:?}", ready.len(), block_h256);
+            }
+        }
+        
+        // Compare blue_work with current best for fork choice
         let current_best_hash = self.client.info().best_hash;
         let current_best_h256 = H256::from_slice(current_best_hash.as_ref());
         let current_best_work = self.ghostdag_store.get_ghostdag_data(&current_best_h256)
             .map(|d| d.blue_work)
             .unwrap_or(0);
         
-        // This block becomes best if it has more blue_work, or same work but lower hash (tie-breaker)
-        let is_better = ghostdag_data.blue_work > current_best_work || 
+        let is_better = ghostdag_data.blue_work > current_best_work ||
             (ghostdag_data.blue_work == current_best_work && block_h256 < current_best_h256);
         
         block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(is_better));
-
         Ok(block)
     }
 }
@@ -796,7 +878,14 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                             import_params.state_action = sc_consensus::StateAction::ApplyChanges(
                                 sc_consensus::StorageChanges::Changes(storage_changes)
                             );
-                            import_params.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(true));
+                            // Calculate if this block is better than current best (same logic as verifier)
+                            let current_best_hash = mining_client.info().best_hash;
+                            let current_best_h256 = H256::from_slice(current_best_hash.as_ref());
+                            let current_best_work = mining_store.get_ghostdag_data(&current_best_h256)
+                                .map(|d| d.blue_work).unwrap_or(0);
+                            let is_better = blue_work > current_best_work ||
+                                (blue_work == current_best_work && block_h256 < current_best_h256);
+                            import_params.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(is_better));
 
                             match block_import.import_block(import_params).await {
                                 Ok(_) => {

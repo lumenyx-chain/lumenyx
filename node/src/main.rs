@@ -1,6 +1,7 @@
 #![warn(missing_docs)]
 
 mod chain_spec;
+mod dag_sync;
 mod cli;
 mod command;
 mod rpc;
