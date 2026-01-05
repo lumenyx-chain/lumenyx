@@ -27,7 +27,8 @@ use sp_api::ProvideRuntimeApi;
 
 // GHOSTDAG imports
 use sc_consensus_ghostdag::{GhostdagStore, GhostdagData};
-use crate::dag_sync::{DagOrphanPool, OrphanBlock, SharedOrphanPool, new_shared_orphan_pool};
+use crate::orphan_pool::{OrphanPool, OrphanBlock, SharedOrphanPool, new_shared_orphan_pool};
+use crate::dag_protocol::{SignedBlock, register_dag_blocks_protocol, run_dag_blocks_server};
 
 // Custom select chain
 use crate::ghostdag_select::GhostdagSelectChain;

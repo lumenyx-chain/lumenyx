@@ -4596,6 +4596,7 @@ dependencies = [
 name = "lumenyx-node"
 version = "1.0.0"
 dependencies = [
+ "async-channel",
  "async-trait",
  "blake3",
  "clap",
@@ -4641,6 +4642,7 @@ dependencies = [
  "sc-telemetry",
  "sc-transaction-pool",
  "sc-transaction-pool-api",
+ "sc-utils",
  "serde_json",
  "sp-api",
  "sp-block-builder",

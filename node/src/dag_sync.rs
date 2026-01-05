@@ -1,164 +1,187 @@
-//! DAG Sync Module for LUMENYX
-//! 
-//! Handles:
-//! - Orphan pool for blocks waiting for parents
-//! - Topological processing (process only when all parents ready)
-//! - Request missing parents via network
-//! - Cascade trigger when parent arrives
+// node/src/dag_sync.rs
 
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+};
+
+use codec::Decode;
 use sp_core::H256;
-use std::collections::{HashMap, HashSet};
-use parking_lot::RwLock;
-use std::sync::Arc;
-use tokio::sync::mpsc;
+use parking_lot::Mutex;
 
-/// Block data stored in orphan pool
-#[derive(Clone)]
-pub struct OrphanBlock {
-    pub hash: H256,
-    pub header_parent: H256,
-    pub all_parents: Vec<H256>,
-    pub block_data: Vec<u8>,
+use sc_network::{NetworkService, PeerId};
+use sp_runtime::traits::Block as BlockT;
+
+use lumenyx_runtime::opaque::Block;
+use crate::dag_protocol::{request_blocks_by_hash, DagResp, SignedBlock};
+
+const MAX_ORPHANS: usize = 20_000;
+const MAX_BATCH: usize = 64;
+
+pub struct DagSync {
+    network: Arc<NetworkService<Block, <Block as BlockT>::Hash>>,
+
+    // child_hash -> (child_block, missing parents)
+    orphans: Mutex<HashMap<H256, (SignedBlock, HashSet<H256>)>>,
+    // parent_hash -> children waiting
+    waiting: Mutex<HashMap<H256, Vec<H256>>>,
+    // requested parent hashes (dedup)
+    requested: Mutex<HashSet<H256>>,
+
+    // "peer hint" per fare request-response
+    last_peer: Mutex<Option<PeerId>>,
+
+    // ready blocks (tutti parents disponibili)
+    ready: Mutex<VecDeque<SignedBlock>>,
+
+    /// reinject verso la tua pipeline di import
+    reinject: Arc<dyn Fn(SignedBlock) + Send + Sync>,
 }
 
-/// DAG Orphan Pool - stores blocks waiting for missing parents
-pub struct DagOrphanPool {
-    /// Orphan blocks by their hash
-    orphans: HashMap<H256, OrphanBlock>,
-    /// Map from missing parent hash -> list of children waiting for it
-    waiting_for_parent: HashMap<H256, Vec<H256>>,
-    /// Count of missing parents for each orphan
-    missing_count: HashMap<H256, usize>,
-    /// Parents we've already requested (to avoid duplicate requests)
-    requested_parents: HashSet<H256>,
-    /// Parents that need to be requested
-    pending_requests: Vec<H256>,
-}
-
-impl DagOrphanPool {
-    pub fn new() -> Self {
+impl DagSync {
+    pub fn new(
+        network: Arc<NetworkService<Block, <Block as BlockT>::Hash>>,
+        reinject: Arc<dyn Fn(SignedBlock) + Send + Sync>,
+    ) -> Self {
         Self {
-            orphans: HashMap::new(),
-            waiting_for_parent: HashMap::new(),
-            missing_count: HashMap::new(),
-            requested_parents: HashSet::new(),
-            pending_requests: Vec::new(),
+            network,
+            orphans: Mutex::new(HashMap::new()),
+            waiting: Mutex::new(HashMap::new()),
+            requested: Mutex::new(HashSet::new()),
+            last_peer: Mutex::new(None),
+            ready: Mutex::new(VecDeque::new()),
+            reinject,
         }
     }
 
-    /// Add a block to orphan pool
-    /// Returns list of missing parent hashes that need to be requested
-    pub fn add_orphan(&mut self, block: OrphanBlock, missing_parents: Vec<H256>) -> Vec<H256> {
-        let hash = block.hash;
-        let missing_count = missing_parents.len();
-        
-        if missing_count == 0 {
-            return vec![];
+    pub fn note_peer(&self, peer: PeerId) {
+        *self.last_peer.lock() = Some(peer);
+    }
+
+    /// Chiamalo quando `verify()` scopre ORPHAN (missing parents).
+    pub fn on_orphan(&self, sb: SignedBlock, missing: Vec<H256>) -> Result<(), String> {
+        if missing.is_empty() {
+            return Ok(());
         }
 
-        log::info!(
-            "🔶 Orphan {:?}: {} missing parents",
-            hash, missing_count
-        );
+        let bh: H256 = H256::from_slice(sb.block.hash().as_ref());
 
-        // Store the orphan
-        self.orphans.insert(hash, block);
-        self.missing_count.insert(hash, missing_count);
+        {
+            let mut orphans = self.orphans.lock();
+            if orphans.len() >= MAX_ORPHANS {
+                return Err("Orphan pool full".into());
+            }
+            orphans.insert(bh, (sb.clone(), missing.iter().cloned().collect()));
+        }
 
-        // Track which parents this block is waiting for
-        let mut to_request = Vec::new();
-        for parent in missing_parents {
-            self.waiting_for_parent
-                .entry(parent)
-                .or_insert_with(Vec::new)
-                .push(hash);
-            
-            // Only request if we haven't already
-            if !self.requested_parents.contains(&parent) {
-                self.requested_parents.insert(parent);
-                to_request.push(parent);
-                self.pending_requests.push(parent);
+        {
+            let mut waiting = self.waiting.lock();
+            for p in &missing {
+                waiting.entry(*p).or_default().push(bh);
             }
         }
 
-        to_request
+        self.fetch_missing(missing)
     }
 
-    /// Called when a parent block arrives
-    /// Returns list of orphans that are now ready to process
-    pub fn parent_arrived(&mut self, parent_hash: H256) -> Vec<OrphanBlock> {
-        let mut ready_blocks = Vec::new();
+    fn fetch_missing(&self, missing: Vec<H256>) -> Result<(), String> {
+        let peer = self
+            .last_peer
+            .lock()
+            .clone()
+            .ok_or_else(|| "No connected peer known yet".to_string())?;
 
-        // Remove from requested set
-        self.requested_parents.remove(&parent_hash);
-
-        // Get all children waiting for this parent
-        if let Some(children) = self.waiting_for_parent.remove(&parent_hash) {
-            for child_hash in children {
-                // Decrement missing count
-                if let Some(count) = self.missing_count.get_mut(&child_hash) {
-                    *count = count.saturating_sub(1);
-                    
-                    if *count == 0 {
-                        // All parents present! Remove from orphan pool
-                        self.missing_count.remove(&child_hash);
-                        if let Some(orphan) = self.orphans.remove(&child_hash) {
-                            log::info!(
-                                "🔷 Orphan {:?} ready (parent {:?} arrived)",
-                                child_hash, parent_hash
-                            );
-                            ready_blocks.push(orphan);
-                        }
-                    }
+        // dedup
+        let mut to_req = Vec::new();
+        {
+            let mut requested = self.requested.lock();
+            for h in missing {
+                if requested.insert(h) {
+                    to_req.push(h);
                 }
             }
         }
 
-        ready_blocks
+        if to_req.is_empty() {
+            return Ok(());
+        }
+
+        for chunk in to_req.chunks(MAX_BATCH) {
+            let net = self.network.clone();
+            let peer2 = peer;
+            let hashes = chunk.to_vec();
+            let reinject = self.reinject.clone();
+
+            // Non bloccare verify/import - spawn task
+            tokio::spawn(async move {
+                match request_blocks_by_hash(net, peer2, hashes).await {
+                    Ok(resp_bytes) => {
+                        if let Ok(resp) = DagResp::decode(&mut &resp_bytes[..]) {
+                            match resp {
+                                DagResp::Blocks { blocks } => {
+                                    for sb in blocks {
+                                        log::info!("📥 DAG sync received block {:?}", sb.block.hash());
+                                        (reinject)(sb);
+                                    }
+                                }
+                                DagResp::NotFound { missing } => {
+                                    log::debug!("DAG sync: peer missing {} blocks", missing.len());
+                                }
+                                DagResp::Error { msg } => {
+                                    log::warn!("DAG sync error: {}", String::from_utf8_lossy(&msg));
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("DAG request failed: {:?}", e);
+                    }
+                }
+            });
+        }
+
+        Ok(())
     }
 
-    /// Get and clear pending requests
-    pub fn take_pending_requests(&mut self) -> Vec<H256> {
-        std::mem::take(&mut self.pending_requests)
+    /// Chiamalo da `client.import_notification_stream()`.
+    pub fn on_block_imported(&self, imported: H256) {
+        self.requested.lock().remove(&imported);
+
+        let children = {
+            let mut waiting = self.waiting.lock();
+            waiting.remove(&imported).unwrap_or_default()
+        };
+
+        for child in children {
+            let maybe_ready = {
+                let mut orphans = self.orphans.lock();
+                if let Some((sb, missing)) = orphans.get_mut(&child) {
+                    missing.remove(&imported);
+                    if missing.is_empty() { Some(sb.clone()) } else { None }
+                } else {
+                    None
+                }
+            };
+
+            if let Some(sb) = maybe_ready {
+                self.orphans.lock().remove(&child);
+                self.ready.lock().push_back(sb);
+            }
+        }
+
+        self.drain_ready();
     }
 
-    /// Check if a block is in the orphan pool
-    pub fn contains(&self, hash: &H256) -> bool {
-        self.orphans.contains_key(hash)
-    }
-
-    /// Get number of orphans
-    pub fn len(&self) -> usize {
-        self.orphans.len()
-    }
-
-    /// Check if we've already requested a parent
-    pub fn is_requested(&self, hash: &H256) -> bool {
-        self.requested_parents.contains(hash)
-    }
-
-    /// Get number of pending requests
-    pub fn pending_request_count(&self) -> usize {
-        self.pending_requests.len()
-    }
-
-    /// Clear old orphans (cleanup)
-    pub fn clear_old(&mut self, max_orphans: usize) {
-        if self.orphans.len() > max_orphans {
-            log::warn!("🔶 Orphan pool overflow ({}), clearing oldest", self.orphans.len());
-            // Simple: just clear everything if too many
-            self.orphans.clear();
-            self.waiting_for_parent.clear();
-            self.missing_count.clear();
-            self.requested_parents.clear();
-            self.pending_requests.clear();
+    fn drain_ready(&self) {
+        loop {
+            let next = self.ready.lock().pop_front();
+            let Some(sb) = next else { break };
+            log::info!("🔷 DAG sync: orphan {:?} now ready, reinjecting", sb.block.hash());
+            (self.reinject)(sb);
         }
     }
-}
 
-/// Thread-safe wrapper
-pub type SharedOrphanPool = Arc<RwLock<DagOrphanPool>>;
-
-pub fn new_shared_orphan_pool() -> SharedOrphanPool {
-    Arc::new(RwLock::new(DagOrphanPool::new()))
+    pub fn orphan_count(&self) -> usize {
+        self.orphans.lock().len()
+    }
 }
