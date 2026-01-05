@@ -35,7 +35,7 @@ pub const BLOCKS_PER_YEAR: u32 = 31_557_600;
 
 /// Block reward: 0.083 LUMENYX per block
 /// ~50% mined in first 4 years like Bitcoin
-pub const BLOCK_REWARD: u128 = 83_000_000_000;
+pub const BLOCK_REWARD: u128 = 83_181_230_512;
 
 /// Blocks per halving: ~4 years at 1 second blocks
 pub const BLOCKS_PER_HALVING: u32 = 126_230_400;
