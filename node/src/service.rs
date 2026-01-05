@@ -763,34 +763,50 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                             continue;
                         }
                     };
+                    // Get all tips for multi-parent block from GHOSTDAG store
+                    // This ensures we use tips that include blocks from OTHER nodes
+                    log::debug!("🔍 step=ghostdag_tips START");
+                    let dag_tips = mining_store.get_tips();
+                    for (i, tip) in dag_tips.iter().enumerate() {
+                        let work = mining_store.get_ghostdag_data(tip).map(|d| d.blue_work).unwrap_or(0);
+                        log::info!("🔍 TIP[{}]: {:?} blue_work={}", i, tip, work);
+                    }
+                    log::debug!("🔍 step=ghostdag_tips OK, found {} tips", dag_tips.len());
                     
-                    let parent_hash = best_header.hash();
-                    let parent_number = *best_header.number();
+                    // Find the tip with highest blue_work - THIS is our main parent
+                    let best_tip = dag_tips.iter()
+                        .filter_map(|h| {
+                            mining_store.get_ghostdag_data(h).map(|d| (*h, d.blue_work))
+                        })
+                        .max_by(|(h1, w1), (h2, w2)| {
+                            match w1.cmp(w2) {
+                                std::cmp::Ordering::Equal => h2.cmp(h1), // Lower hash wins tie
+                                other => other,
+                            }
+                        })
+                        .map(|(h, _)| h);
+                    
+                    // Use GHOSTDAG best tip as main parent, fallback to substrate best
+                    let main_parent_h256 = best_tip.unwrap_or_else(|| H256::from_slice(best_header.hash().as_ref()));
 
-                    // Get all tips for multi-parent block
-                    log::debug!("🔍 step=leaves START");
-                    let tips = match tokio::time::timeout(
-                        Duration::from_secs(10),
-                        select_chain_mining.leaves()
-                    ).await {
-                        Ok(Ok(t)) => {
-                            log::debug!("🔍 step=leaves OK");
-                            t
-                        },
-                        Ok(Err(_)) => vec![parent_hash],
-                        Err(_) => {
-                            log::error!("❌ leaves TIMEOUT >5s - possible deadlock!");
-                            vec![parent_hash]
+                    // Get header for the GHOSTDAG best tip to use in proposer
+                    let main_parent_substrate_hash = sp_core::H256::from_slice(main_parent_h256.as_bytes());
+                    let best_header = match mining_client.header(main_parent_substrate_hash) {
+                        Ok(Some(h)) => h,
+                        _ => {
+                            log::warn!("Could not get header for GHOSTDAG tip {:?}, using substrate best", main_parent_h256);
+                            best_header
                         }
                     };
-
-                    // Select parents: best + other tips (up to MAX_PARENTS)
+                    let parent_hash = best_header.hash();
+                    let parent_number = *best_header.number();
+                    
+                    // Select parents: main parent + other tips (up to MAX_PARENTS)
                     let max_parents = 10usize;
-                    let mut parents: Vec<H256> = vec![H256::from_slice(parent_hash.as_ref())];
-                    for tip in tips.iter().take(max_parents - 1) {
-                        let tip_h256 = H256::from_slice(tip.as_ref());
-                        if tip_h256 != parents[0] && !parents.contains(&tip_h256) {
-                            parents.push(tip_h256);
+                    let mut parents: Vec<H256> = vec![main_parent_h256];
+                    for tip in dag_tips.iter().take(max_parents - 1) {
+                        if *tip != parents[0] && !parents.contains(tip) {
+                            parents.push(*tip);
                         }
                     }
 
