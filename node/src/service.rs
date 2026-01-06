@@ -25,18 +25,8 @@ use sp_consensus::{BlockOrigin, SelectChain, SyncOracle};
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT};
 use sp_api::ProvideRuntimeApi;
 
-// GHOSTDAG imports
-use sc_consensus_ghostdag::{GhostdagStore, GhostdagData};
-use crate::orphan_pool::{OrphanPool, OrphanBlock, SharedOrphanPool, new_shared_orphan_pool};
-use crate::dag_protocol::{SignedBlock, register_dag_blocks_protocol, run_dag_blocks_server, DagResp};
-use crate::dag_sync::DagSync;
 
-// Orphan channel types for Verifier -> DagSync communication
-pub type OrphanSender = async_channel::Sender<(SignedBlock, Vec<H256>)>;
-pub type OrphanReceiver = async_channel::Receiver<(SignedBlock, Vec<H256>)>;
 
-// Custom select chain
-use crate::ghostdag_select::GhostdagSelectChain;
 
 // Frontier imports
 use fc_mapping_sync::{EthereumBlockNotification, EthereumBlockNotificationSinks, SyncStrategy, kv::MappingSyncWorker};
@@ -50,7 +40,7 @@ pub fn db_config_dir(config: &Configuration) -> std::path::PathBuf {
 
 pub type FullClient = TFullClient<Block, RuntimeApi, WasmExecutor<sp_io::SubstrateHostFunctions>>;
 type FullBackend = TFullBackend<Block>;
-type FullSelectChain = GhostdagSelectChain<Block, FullBackend, FullClient>;
+type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
 pub type FrontierBackend = fc_db::Backend<Block, FullClient>;
 
 pub struct FrontierPartialComponents {
@@ -60,7 +50,7 @@ pub struct FrontierPartialComponents {
 }
 
 const GHOSTDAG_K: u64 = 18;
-const TARGET_BLOCK_TIME_MS: u64 = 1000;
+const TARGET_BLOCK_TIME_MS: u64 = 3000;
 const INITIAL_DIFFICULTY: u64 = 100;
 
 /// GHOSTDAG Engine ID for digests
@@ -138,261 +128,17 @@ fn hash_meets_target(hash: &H256, target: &H256) -> bool {
 }
 
 /// GHOSTDAG Verifier - processes blocks through DAG and sets fork choice
-pub struct GhostdagVerifier<C> {
-    client: Arc<C>,
-    ghostdag_store: GhostdagStore<C>,
-    /// DAG-aware orphan pool for blocks waiting for missing parents
-    orphan_pool: SharedOrphanPool,
-    /// Channel to send orphan blocks to DagSync
-    orphan_tx: Option<OrphanSender>,
-}
-
-impl<C> GhostdagVerifier<C> {
-    pub fn new(client: Arc<C>) -> Self {
-        let ghostdag_store = GhostdagStore::new(client.clone());
-        Self { 
-            client, 
-            ghostdag_store,
-            orphan_pool: new_shared_orphan_pool(),
-            orphan_tx: None,
-        }
-    }
-
-    pub fn with_orphan_channel(client: Arc<C>, orphan_tx: OrphanSender) -> Self {
-        let ghostdag_store = GhostdagStore::new(client.clone());
-        Self {
-            client,
-            ghostdag_store,
-            orphan_pool: new_shared_orphan_pool(),
-            orphan_tx: Some(orphan_tx),
-        }
-    }
-}
-
-impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> GhostdagVerifier<C> {
-    /// Find which parents are missing from our DAG store
-    fn find_missing_parents(&self, all_parents: &[H256]) -> Vec<H256> {
-        all_parents
-            .iter()
-            .filter(|p| **p != H256::zero())
-            .filter(|p| self.ghostdag_store.get_ghostdag_data(p).is_none())
-            .cloned()
-            .collect()
-    }
-
-    /// Process a block through GHOSTDAG
-    /// Returns Err("ORPHAN:...") if parents are missing - block should go to orphan pool
-    fn process_ghostdag(&self, block_hash: H256, parent_hash: H256, extra_parents: Vec<H256>) -> Result<GhostdagData, String> {
-        // Collect all parents (header parent + extra parents from digest)
-        let mut all_parents = vec![parent_hash];
-        for p in extra_parents.clone() {
-            if p != parent_hash && !all_parents.contains(&p) {
-                all_parents.push(p);
-            }
-        }
-
-        // For genesis, parent is zero
-        if parent_hash == H256::zero() || all_parents.iter().all(|p| *p == H256::zero()) {
-            let genesis_data = GhostdagData {
-                blue_score: 0,
-                blue_work: 1,
-                selected_parent: H256::zero(),
-                mergeset_blues: vec![],
-                mergeset_reds: vec![],
-                blues_anticone_sizes: vec![],
-            };
-            self.ghostdag_store.store_ghostdag_data(&block_hash, &genesis_data)?;
-            self.ghostdag_store.store_parents(&block_hash, &[])?;
-            self.ghostdag_store.update_tips(&block_hash, &[])?;
-            return Ok(genesis_data);
-        }
-
-        // CRITICAL: Check for missing parents BEFORE processing
-        // This ensures topological ordering - we only process when ALL parents are known
-        let missing = self.find_missing_parents(&all_parents);
-        if !missing.is_empty() {
-            // Return special error format that verify() can parse
-            let missing_str: Vec<String> = missing.iter().map(|h| format!("{:?}", h)).collect();
-            return Err(format!("ORPHAN:{}", missing_str.join(",")));
-        }
-
-        // All parents present! Find selected parent (highest blue_work, deterministic tie-break)
-        let selected_parent = all_parents.iter()
-            .filter_map(|p| {
-                self.ghostdag_store.get_ghostdag_data(p).map(|d| (*p, d.blue_work))
-            })
-            .max_by(|a, b| {
-                match a.1.cmp(&b.1) {
-                    std::cmp::Ordering::Equal => b.0.cmp(&a.0), // Lower hash wins tie (deterministic)
-                    other => other,
-                }
-            })
-            .map(|(h, _)| h)
-            .ok_or_else(|| format!("NoParent: {:?}", block_hash))?;
-
-        let parent_data = self.ghostdag_store.get_ghostdag_data(&selected_parent)
-            .ok_or_else(|| format!("ParentMissing: {:?}", selected_parent))?;
-
-        // Mergeset blues with DETERMINISTIC ordering (blue_work DESC, hash ASC)
-        let mut mergeset_with_work: Vec<(H256, u128)> = all_parents.iter()
-            .filter(|p| **p != selected_parent)
-            .filter_map(|p| {
-                self.ghostdag_store.get_ghostdag_data(p).map(|d| (*p, d.blue_work))
-            })
-            .collect();
-        
-        // Sort: blue_work DESC, then hash ASC for determinism
-        mergeset_with_work.sort_by(|a, b| {
-            match b.1.cmp(&a.1) {
-                std::cmp::Ordering::Equal => a.0.cmp(&b.0),
-                other => other,
-            }
-        });
-        
-        let mergeset_blues: Vec<H256> = mergeset_with_work.into_iter().map(|(h, _)| h).collect();
-
-        // Calculate blue_score and blue_work
-        let blue_score = parent_data.blue_score + 1 + mergeset_blues.len() as u64;
-        let blue_work = parent_data.blue_work + 1 + mergeset_blues.len() as u128;
-
-        let data = GhostdagData {
-            blue_score,
-            blue_work,
-            selected_parent,
-            mergeset_blues,
-            mergeset_reds: vec![],
-            blues_anticone_sizes: vec![],
-        };
-
-        // Store in DAG
-        self.ghostdag_store.store_ghostdag_data(&block_hash, &data)?;
-        self.ghostdag_store.store_parents(&block_hash, &all_parents)?;
-        self.ghostdag_store.update_tips(&block_hash, &all_parents)?;
-
-        // Update children tracking
-        for parent in &all_parents {
-            let _ = self.ghostdag_store.add_child(parent, &block_hash);
-        }
-
-        log::info!(
-            "🔷 GHOSTDAG: block {:?} blue_score={} blue_work={} selected_parent={:?}",
-            block_hash, data.blue_score, data.blue_work, data.selected_parent
-        );
-
-        Ok(data)
-    }
-}
-
+/// Simple verifier - accepts all valid blocks using LongestChain
+pub struct SimpleVerifier;
 
 #[async_trait::async_trait]
-impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> Verifier<Block> for GhostdagVerifier<C> {
+impl Verifier<Block> for SimpleVerifier {
     async fn verify(
         &self,
         mut block: BlockImportParams<Block>,
     ) -> Result<BlockImportParams<Block>, String> {
-        let block_hash = block.header.hash();
-        let parent_hash = *block.header.parent_hash();
-        
-        // Extract extra parents from digest (if any)
-        let mut extra_parents = Vec::new();
-        for log in block.header.digest().logs() {
-            if let DigestItem::Other(data) = log {
-                if let Ok(digest) = DagParentsDigest::decode(&mut &data[..]) {
-                    extra_parents = digest.parents.clone();
-                    break;
-                }
-            }
-        }
-
-        let block_h256 = H256::from_slice(block_hash.as_ref());
-        let parent_h256 = H256::from_slice(parent_hash.as_ref());
-        
-        // Try to process through GHOSTDAG
-        let ghostdag_result = self.process_ghostdag(block_h256, parent_h256, extra_parents.clone());
-        
-        // Handle ORPHAN case - block has missing parents
-        let ghostdag_data = match ghostdag_result {
-            Ok(data) => data,
-            Err(e) if e.starts_with("ORPHAN:") => {
-                let missing_str = e.strip_prefix("ORPHAN:").unwrap_or("");
-                log::warn!(
-                    "🔶 Block {:?} has missing parents: {} - deferring",
-                    block_h256, missing_str
-                );
-                
-                // Collect all parents for orphan tracking
-                let mut all_parents = vec![parent_h256];
-                for p in &extra_parents {
-                    if *p != parent_h256 && !all_parents.contains(p) {
-                        all_parents.push(*p);
-                    }
-                }
-                
-                // Find which parents are actually missing
-                let missing_parents: Vec<H256> = all_parents.iter()
-                    .filter(|p| **p != H256::zero())
-                    .filter(|p| self.ghostdag_store.get_ghostdag_data(p).is_none())
-                    .cloned()
-                    .collect();
-                
-                // Add to orphan pool
-                let orphan = OrphanBlock {
-                    hash: block_h256,
-                    header_parent: parent_h256,
-                    all_parents: all_parents.clone(),
-                    block_data: vec![],
-                };
-
-                {
-                    let mut pool = self.orphan_pool.write();
-                    let _ = pool.add_orphan(orphan, missing_parents.clone());
-                }
-
-                // CRITICAL: Send to DagSync to fetch missing parents!
-                if let Some(ref tx) = self.orphan_tx {
-                    if let Some(body) = &block.body {
-                        let full_block = Block::new(block.header.clone(), body.clone());
-                        let signed_block = SignedBlock {
-                            block: full_block,
-                            justifications: block.justifications.clone(),
-                        };
-                        if let Err(e) = tx.try_send((signed_block, missing_parents.clone())) {
-                            log::warn!("Failed to send orphan to DagSync: {:?}", e);
-                        } else {
-                            log::info!("📤 Sent orphan {:?} to DagSync, missing {} parents",
-                                block_h256, missing_parents.len());
-                        }
-                    }
-                }
-
-                // Return error to defer - Substrate will retry when parent arrives
-                return Err(format!("DeferredBlock: waiting for {} parents", missing_parents.len()));
-                // Return error to defer - Substrate will retry when parent arrives
-                return Err(format!("DeferredBlock: waiting for {} parents", missing_parents.len()));
-            },
-            Err(e) => return Err(e),
-        };
-        
-        // Block processed - check if orphans can now be processed
-        {
-            let mut pool = self.orphan_pool.write();
-            let ready = pool.parent_arrived(block_h256);
-            if !ready.is_empty() {
-                log::info!("🔷 {} orphan(s) ready after {:?}", ready.len(), block_h256);
-            }
-        }
-        
-        // Compare blue_work with current best for fork choice
-        let current_best_hash = self.client.info().best_hash;
-        let current_best_h256 = H256::from_slice(current_best_hash.as_ref());
-        let current_best_work = self.ghostdag_store.get_ghostdag_data(&current_best_h256)
-            .map(|d| d.blue_work)
-            .unwrap_or(0);
-        
-        let is_better = ghostdag_data.blue_work > current_best_work ||
-            (ghostdag_data.blue_work == current_best_work && block_h256 < current_best_h256);
-        
-        block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(is_better));
+        // Use LongestChain fork choice - higher block number wins
+        block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::LongestChain);
         Ok(block)
     }
 }
@@ -411,7 +157,7 @@ pub fn new_partial(
             Option<Telemetry>,
             Arc<FrontierBackend>,
             FrontierPartialComponents,
-            OrphanReceiver,
+
         ),
     >,
     ServiceError,
@@ -455,7 +201,7 @@ pub fn new_partial(
     });
 
     // Use GHOSTDAG select chain instead of LongestChain
-    let select_chain = GhostdagSelectChain::new(backend.clone(), client.clone());
+    let select_chain = sc_consensus::LongestChain::new(backend.clone());
 
     let transaction_pool = sc_transaction_pool::BasicPool::new_full(
         config.transaction_pool.clone(),
@@ -466,11 +212,10 @@ pub fn new_partial(
     );
 
     // Use GHOSTDAG verifier
-    // Create orphan channel for Verifier -> DagSync communication
-    let (orphan_tx, orphan_rx) = async_channel::unbounded::<(SignedBlock, Vec<H256>)>();
+    // Use simple verifier (no GHOSTDAG)
 
     // Use GHOSTDAG verifier with orphan channel
-    let verifier = GhostdagVerifier::with_orphan_channel(client.clone(), orphan_tx);
+    let verifier = SimpleVerifier;
     
     let import_queue = sc_consensus::BasicQueue::new(
         verifier,
@@ -502,7 +247,7 @@ pub fn new_partial(
             filter_pool,
             fee_history_cache,
             fee_history_cache_limit,
-        }, orphan_rx),
+        }),
     })
 }
 
@@ -517,7 +262,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (_, mut telemetry, frontier_backend, frontier_partial, orphan_rx),
+        other: (_, mut telemetry, frontier_backend, frontier_partial),
     } = new_partial(&config)?;
 
     let FrontierPartialComponents {
@@ -526,22 +271,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         fee_history_cache_limit,
     } = frontier_partial;
 
-    // Initialize GHOSTDAG with genesis
-    let ghostdag_store = GhostdagStore::new(client.clone());
-    let genesis_hash = client.info().genesis_hash;
-    let genesis_h256 = H256::from_slice(genesis_hash.as_ref());
-    
-    if ghostdag_store.get_ghostdag_data(&genesis_h256).is_none() {
-        let _ = ghostdag_store.init_genesis(genesis_h256);
-        log::info!("🔷 GHOSTDAG genesis initialized: {:?}", genesis_h256);
-    }
-
     let mut net_config = sc_network::config::FullNetworkConfiguration::<
         Block,
         <Block as BlockT>::Hash,
         sc_network::NetworkWorker<Block, <Block as BlockT>::Hash>,
     >::new(&config.network, config.prometheus_registry().cloned());
-    let dag_inbound_rx = crate::dag_protocol::register_dag_blocks_protocol(&mut net_config);
 
     let metrics = sc_network::NotificationMetrics::new(config.prometheus_registry());
 
@@ -559,87 +293,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             metrics,
         })?;
 
-    // ============================================
-    // DAG SYNC INTEGRATION
-    // ============================================
-    
-    // 1. Spawn DAG blocks server (handles incoming requests)
-    task_manager.spawn_handle().spawn(
-        "dag-blocks-server",
-        None,
-        crate::dag_protocol::run_dag_blocks_server(dag_inbound_rx, client.clone()),
-    );
-    
-    // 2. Create reinject channel and DagSync
-    let (reinject_tx, reinject_rx) = async_channel::bounded::<SignedBlock>(1024);
-    let reinject_fn: Arc<dyn Fn(SignedBlock) + Send + Sync> = Arc::new({
-        let tx = reinject_tx.clone();
-        move |sb| { let _ = tx.try_send(sb); }
-    });
-    let dag_sync = Arc::new(DagSync::new(network.clone(), reinject_fn));
-    
-    // 3. Peer hint via event_stream
-    let dag_sync_peer = dag_sync.clone();
-    let mut ev = network.event_stream("dag-sync");
-    task_manager.spawn_handle().spawn("dag-peer-hint", None, async move {
-        use futures::StreamExt;
-        while let Some(e) = ev.next().await {
-            if let sc_network::Event::NotificationStreamOpened { remote, .. } = e {
-                dag_sync_peer.note_peer(remote.into());
-            }
-        }
-    });
-    
-    // 4. Reinject importer task
-    let block_import_reinject = client.clone();
-    task_manager.spawn_handle().spawn("dag-reinject", None, async move {
-        while let Ok(sb) = reinject_rx.recv().await {
-            log::info!("📥 Reinjecting orphan block {:?}", sb.block.hash());
-            let header = sb.block.header().clone();
-            let body = sb.block.extrinsics().to_vec();
-            let mut params = sc_consensus::BlockImportParams::new(
-                sp_consensus::BlockOrigin::NetworkBroadcast, 
-                header
-            );
-            params.body = Some(body);
-            params.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(false));
-            let _ = block_import_reinject.import_block(params).await;
-        }
-    });
-    
-    // 5. Hook import notifications to unblock orphans
-    let dag_sync_import = dag_sync.clone();
-    let mut import_stream = client.import_notification_stream();
-    task_manager.spawn_handle().spawn("dag-import-hook", None, async move {
-        use futures::StreamExt;
-        while let Some(n) = import_stream.next().await {
-            let h = sp_core::H256::from_slice(n.hash.as_ref());
-            dag_sync_import.on_block_imported(h);
-        }
-    });
-    
-    // 6. Connect orphan channel from Verifier to DagSync
-    let dag_sync_orphan = dag_sync.clone();
-    task_manager.spawn_handle().spawn("dag-orphan-handler", None, async move {
-        while let Ok((signed_block, missing_parents)) = orphan_rx.recv().await {
-            let block_hash = H256::from_slice(signed_block.block.hash().as_ref());
-            log::info!("📥 Orphan handler: processing {:?} with {} missing parents",
-                block_hash, missing_parents.len());
-            if let Err(e) = dag_sync_orphan.on_orphan(signed_block, missing_parents) {
-                log::warn!("DagSync::on_orphan failed: {}", e);
-            }
-        }
-    });
-
-    log::info!("🔷 DAG Sync initialized");
-
 
     let role = config.role;
     let force_authoring = config.force_authoring;
     let prometheus_registry = config.prometheus_registry().cloned();
 
-    log::info!("🔷 GHOSTDAG: K={}, target={}ms, initial_difficulty={}", 
-        GHOSTDAG_K, TARGET_BLOCK_TIME_MS, INITIAL_DIFFICULTY);
 
     let pubsub_notification_sinks: Arc<EthereumBlockNotificationSinks<EthereumBlockNotification<Block>>> = Default::default();
     let storage_override = Arc::new(StorageOverrideHandler::new(client.clone()));
@@ -764,14 +422,13 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         );
 
         let mining_client = client.clone();
-        let mining_store = GhostdagStore::new(client.clone());
         let block_import = client.clone();
         let select_chain_mining = select_chain.clone();
         let mining_sync_service = sync_service.clone();
         let mining_tx_pool = transaction_pool.clone();
 
         task_manager.spawn_handle().spawn_blocking(
-            "ghostdag-miner",
+            "pow-miner",
             Some("mining"),
             async move {
                 let mut interval = tokio::time::interval(Duration::from_millis(TARGET_BLOCK_TIME_MS));
@@ -779,104 +436,37 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 let target = difficulty_to_target(difficulty);
                 let mut consecutive_propose_failures: u32 = 0;
                 const MAX_FAILURES_BEFORE_POOL_CLEAR: u32 = 3;
-                loop {
 
+                loop {
                     // ============================================
                     // SYNC GATE - Must pass ALL checks before mining
                     // ============================================
-                    
+
                     // 1. Are we actively syncing?
                     if mining_sync_service.is_major_syncing() {
                         log::debug!("⏸️  Syncing in progress...");
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                         continue;
                     }
-                    
-                    // 2. Do we have peers?
-                    let num_peers = mining_sync_service.num_connected_peers();
-                    if num_peers == 0 {
-                        log::debug!("⏸️  No peers connected...");
-                        tokio::time::sleep(Duration::from_millis(2000)).await;
-                        continue;
-                    }
-                    // 3. Check GHOSTDAG store - only block if we have blocks but no tips (sync issue)
-                    let tips = mining_store.get_tips();
-                    let our_best_number = mining_client.info().best_number;
-                    if tips.is_empty() && our_best_number > 0 {
-                        log::debug!("⏸️  GHOSTDAG store empty but have blocks - waiting for sync...");
-                        tokio::time::sleep(Duration::from_millis(2000)).await;
-                        continue;
-                    }
+
+                    // 2. Do we have peers? (skip for first node)
+                    // let num_peers = mining_sync_service.num_connected_peers();
+                    // First node needs to mine without peers
 
                     // PASSED ALL CHECKS - Safe to mine!
-                    // ============================================
                     interval.tick().await;
 
-                    // Get best block from GHOSTDAG select chain
-                    log::debug!("🔍 step=best_chain START");
-                    let best_header = match tokio::time::timeout(
-                        Duration::from_secs(10),
-                        select_chain_mining.best_chain()
-                    ).await {
-                        Ok(Ok(h)) => {
-                            log::debug!("🔍 step=best_chain OK");
-                            h
-                        },
-                        Ok(Err(e)) => {
+                    // Get best block from LongestChain
+                    let best_header = match select_chain_mining.best_chain().await {
+                        Ok(h) => h,
+                        Err(e) => {
                             log::warn!("Failed to get best chain: {:?}", e);
                             continue;
                         }
-                        Err(_) => {
-                            log::error!("❌ best_chain TIMEOUT >5s - possible deadlock!");
-                            continue;
-                        }
                     };
-                    // Get all tips for multi-parent block from GHOSTDAG store
-                    // This ensures we use tips that include blocks from OTHER nodes
-                    log::debug!("🔍 step=ghostdag_tips START");
-                    let dag_tips = mining_store.get_tips();
-                    for (i, tip) in dag_tips.iter().enumerate() {
-                        let work = mining_store.get_ghostdag_data(tip).map(|d| d.blue_work).unwrap_or(0);
-                        log::info!("🔍 TIP[{}]: {:?} blue_work={}", i, tip, work);
-                    }
-                    log::debug!("🔍 step=ghostdag_tips OK, found {} tips", dag_tips.len());
-                    
-                    // Find the tip with highest blue_work - THIS is our main parent
-                    let best_tip = dag_tips.iter()
-                        .filter_map(|h| {
-                            mining_store.get_ghostdag_data(h).map(|d| (*h, d.blue_work))
-                        })
-                        .max_by(|(h1, w1), (h2, w2)| {
-                            match w1.cmp(w2) {
-                                std::cmp::Ordering::Equal => h2.cmp(h1), // Lower hash wins tie
-                                other => other,
-                            }
-                        })
-                        .map(|(h, _)| h);
-                    
-                    // Use GHOSTDAG best tip as main parent, fallback to substrate best
-                    let main_parent_h256 = best_tip.unwrap_or_else(|| H256::from_slice(best_header.hash().as_ref()));
 
-                    // Get header for the GHOSTDAG best tip to use in proposer
-                    let main_parent_substrate_hash = sp_core::H256::from_slice(main_parent_h256.as_bytes());
-                    let best_header = match mining_client.header(main_parent_substrate_hash) {
-                        Ok(Some(h)) => h,
-                        _ => {
-                            log::warn!("Could not get header for GHOSTDAG tip {:?}, using substrate best", main_parent_h256);
-                            best_header
-                        }
-                    };
                     let parent_hash = best_header.hash();
                     let parent_number = *best_header.number();
-                    
-                    // Select parents: main parent + other tips (up to MAX_PARENTS)
-                    let max_parents = 10usize;
-                    let mut parents: Vec<H256> = vec![main_parent_h256];
-                    for tip in dag_tips.iter().take(max_parents - 1) {
-                        if *tip != parents[0] && !parents.contains(tip) {
-                            parents.push(*tip);
-                        }
-                    }
 
                     // Create inherent data
                     let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
@@ -889,68 +479,40 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     };
 
                     // Create proposer
-                    log::debug!("🔍 step=proposer_init START");
-                    let proposer = match tokio::time::timeout(
-                        Duration::from_secs(10),
-                        proposer_factory.init(&best_header)
-                    ).await {
-                        Ok(Ok(p)) => {
-                            log::debug!("🔍 step=proposer_init OK");
-                            p
-                        },
-                        Ok(Err(e)) => {
+                    let proposer = match proposer_factory.init(&best_header).await {
+                        Ok(p) => p,
+                        Err(e) => {
                             log::warn!("Failed to create proposer: {:?}", e);
-                            continue;
-                        }
-                        Err(_) => {
-                            log::error!("❌ proposer_init TIMEOUT >5s - possible deadlock!");
                             continue;
                         }
                     };
 
-                    // Build digest with miner address and extra parents
+                    // Build digest with miner address
                     let miner_digest = MinerAddressDigest { miner: miner_address };
-                    let mut digest_logs = vec![
-                        DigestItem::PreRuntime(GHOSTDAG_ENGINE_ID, miner_digest.encode()),
-                    ];
-                    
-                    // Add extra parents if any
-                    if parents.len() > 1 {
-                        let parents_digest = DagParentsDigest { parents: parents[1..].to_vec() };
-                        digest_logs.push(DigestItem::Other(parents_digest.encode()));
-                    }
+                    let digest = sp_runtime::generic::Digest {
+                        logs: vec![DigestItem::PreRuntime(GHOSTDAG_ENGINE_ID, miner_digest.encode())],
+                    };
 
-                    log::debug!("🔍 step=propose START");
-                    let proposal = match tokio::time::timeout(
-                        Duration::from_secs(10),
-                        proposer.propose(
-                            inherent_data,
-                            sp_runtime::generic::Digest { logs: digest_logs },
-                            Duration::from_millis(3000),
-                            None,
-                        )
+                    // Propose block
+                    let proposal = match proposer.propose(
+                        inherent_data,
+                        digest,
+                        Duration::from_millis(3000),
+                        None,
                     ).await {
-                        Ok(Ok(p)) => {
-                            log::debug!("🔍 step=propose OK");
-                            p
-                        },
-                        Ok(Err(e)) => {
+                        Ok(p) => p,
+                        Err(e) => {
                             consecutive_propose_failures += 1;
-                            log::warn!("⚠️ Failed to propose block ({}/{} failures): {:?}", consecutive_propose_failures, MAX_FAILURES_BEFORE_POOL_CLEAR, e);
+                            log::warn!("⚠️ Failed to propose block ({}/{}): {:?}",
+                                consecutive_propose_failures, MAX_FAILURES_BEFORE_POOL_CLEAR, e);
                             if consecutive_propose_failures >= MAX_FAILURES_BEFORE_POOL_CLEAR {
-                                log::warn!("🧹 Too many propose failures - clearing transaction pool to recover");
+                                log::warn!("🧹 Clearing transaction pool");
                                 let pending: Vec<_> = mining_tx_pool.ready().map(|tx| tx.hash.clone()).collect();
                                 for hash in pending {
                                     let _ = mining_tx_pool.remove_invalid(&[hash]);
                                 }
                                 consecutive_propose_failures = 0;
                             }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                            continue;
-                        }
-                        Err(_) => {
-                            log::error!("❌ propose TIMEOUT >5s - possible deadlock!");
-                            consecutive_propose_failures += 1;
                             continue;
                         }
                     };
@@ -968,7 +530,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     nonce[0..8].copy_from_slice(&seed.to_le_bytes());
 
                     let mut found = false;
-                    for attempt in 0..1_000_000u64 {
+                    for _ in 0..1_000_000u64 {
                         for i in 0..32 {
                             if nonce[i] == 255 { nonce[i] = 0; }
                             else { nonce[i] += 1; break; }
@@ -977,90 +539,22 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                         let pow_hash = compute_pow_hash(header_hash.as_ref(), &nonce);
 
                         if hash_meets_target(&pow_hash, &target) {
-                            // Process through GHOSTDAG before import
-                            let block_h256 = H256::from_slice(header_hash.as_ref());
-                            let parent_h256 = H256::from_slice(header.parent_hash().as_ref());
-                            
-                            // Calculate GHOSTDAG data
-                            let extra_parents: Vec<H256> = if parents.len() > 1 {
-                                parents[1..].to_vec()
-                            } else {
-                                vec![]
-                            };
-                            let mut all_parents = vec![parent_h256];
-                            all_parents.extend(extra_parents.iter().cloned());
-                            // Find selected parent (highest blue_work, deterministic tie-break)
-                            let selected_parent = all_parents.iter()
-                                .filter_map(|p| mining_store.get_ghostdag_data(p).map(|d| (*p, d.blue_work)))
-                                .max_by(|a, b| {
-                                    match a.1.cmp(&b.1) {
-                                        std::cmp::Ordering::Equal => b.0.cmp(&a.0),
-                                        other => other,
-                                    }
-                                })
-                                .map(|(h, _)| h)
-                                .unwrap_or(parent_h256);
-                            let parent_data = mining_store.get_ghostdag_data(&selected_parent)
-                                .unwrap_or_default();
-                            // Mergeset blues with DETERMINISTIC ordering (blue_work DESC, hash ASC)
-                            let mut mergeset_with_work: Vec<(H256, u128)> = all_parents.iter()
-                                .filter(|p| **p != selected_parent)
-                                .filter_map(|p| mining_store.get_ghostdag_data(p).map(|d| (*p, d.blue_work)))
-                                .collect();
-                            mergeset_with_work.sort_by(|a, b| {
-                                match b.1.cmp(&a.1) {
-                                    std::cmp::Ordering::Equal => a.0.cmp(&b.0),
-                                    other => other,
-                                }
-                            });
-                            let mergeset_blues: Vec<H256> = mergeset_with_work.into_iter().map(|(h, _)| h).collect();
-                            
-                            let blue_score = parent_data.blue_score + 1 + mergeset_blues.len() as u64;
-                            let blue_work = parent_data.blue_work + 1 + mergeset_blues.len() as u128;
-                            
-                            let ghostdag_data = GhostdagData {
-                                blue_score,
-                                blue_work,
-                                selected_parent,
-                                mergeset_blues,
-                                mergeset_reds: vec![],
-                                blues_anticone_sizes: vec![],
-                            };
-                            
-                            // Store GHOSTDAG data
-                            let _ = mining_store.store_ghostdag_data(&block_h256, &ghostdag_data);
-                            let _ = mining_store.store_parents(&block_h256, &all_parents);
-                            let _ = mining_store.update_tips(&block_h256, &all_parents);
-                            for p in &all_parents {
-                                let _ = mining_store.add_child(p, &block_h256);
-                            }
-
-                            // Import block with Custom fork choice
+                            // Import block with LongestChain fork choice
                             let mut import_params = BlockImportParams::new(BlockOrigin::Own, header.clone());
                             import_params.body = Some(body.clone());
                             import_params.state_action = sc_consensus::StateAction::ApplyChanges(
                                 sc_consensus::StorageChanges::Changes(storage_changes)
                             );
-                            // Calculate if this block is better than current best (same logic as verifier)
-                            let current_best_hash = mining_client.info().best_hash;
-                            let current_best_h256 = H256::from_slice(current_best_hash.as_ref());
-                            let current_best_work = mining_store.get_ghostdag_data(&current_best_h256)
-                                .map(|d| d.blue_work).unwrap_or(0);
-                            let is_better = blue_work > current_best_work ||
-                                (blue_work == current_best_work && block_h256 < current_best_h256);
-                            import_params.fork_choice = Some(sc_consensus::ForkChoiceStrategy::Custom(is_better));
+                            import_params.fork_choice = Some(sc_consensus::ForkChoiceStrategy::LongestChain);
 
                             match block_import.import_block(import_params).await {
                                 Ok(_) => {
                                     log::info!(
-                                        "✅ Block #{} mined! hash={:?} blue_score={} blue_work={} parents={}",
+                                        "✅ Block #{} mined! hash={:?}",
                                         parent_number + 1,
-                                        header_hash,
-                                        blue_score,
-                                        blue_work,
-                                        all_parents.len()
+                                        header_hash
                                     );
-                                    consecutive_propose_failures = 0; // Reset on success
+                                    consecutive_propose_failures = 0;
                                 }
                                 Err(e) => {
                                     log::error!("❌ Failed to import block: {:?}", e);
@@ -1079,7 +573,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             },
         );
 
-        log::info!("🚀 GHOSTDAG miner started!");
+        log::info!("🚀 PoW miner started!");
     } else {
         log::info!("📡 Sync-only mode (not mining)");
     }
