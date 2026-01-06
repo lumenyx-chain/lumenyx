@@ -50,7 +50,7 @@ pub struct FrontierPartialComponents {
 }
 
 const GHOSTDAG_K: u64 = 18;
-const TARGET_BLOCK_TIME_MS: u64 = 3000;
+const TARGET_BLOCK_TIME_MS: u64 = 10000;
 const INITIAL_DIFFICULTY: u64 = 100;
 
 /// GHOSTDAG Engine ID for digests
