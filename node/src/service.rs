@@ -1,6 +1,6 @@
 //! LUMENYX Service Configuration - GHOSTDAG PoW with proper fork choice
 //!
-//! 1. Uses GhostdagSelectChain instead of LongestChain
+//! 1. Uses LongestChain for fork choice
 //! 2. Verifier processes blocks through GHOSTDAG (calculates blue_score/blue_work)
 //! 3. Fork choice based on blue_work, not block number
 //! 4. All blocks (own + received) are added to DAG store
