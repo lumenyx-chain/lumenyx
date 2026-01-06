@@ -31,6 +31,10 @@ use crate::orphan_pool::{OrphanPool, OrphanBlock, SharedOrphanPool, new_shared_o
 use crate::dag_protocol::{SignedBlock, register_dag_blocks_protocol, run_dag_blocks_server, DagResp};
 use crate::dag_sync::DagSync;
 
+// Orphan channel types for Verifier -> DagSync communication
+pub type OrphanSender = async_channel::Sender<(SignedBlock, Vec<H256>)>;
+pub type OrphanReceiver = async_channel::Receiver<(SignedBlock, Vec<H256>)>;
+
 // Custom select chain
 use crate::ghostdag_select::GhostdagSelectChain;
 
@@ -139,6 +143,8 @@ pub struct GhostdagVerifier<C> {
     ghostdag_store: GhostdagStore<C>,
     /// DAG-aware orphan pool for blocks waiting for missing parents
     orphan_pool: SharedOrphanPool,
+    /// Channel to send orphan blocks to DagSync
+    orphan_tx: Option<OrphanSender>,
 }
 
 impl<C> GhostdagVerifier<C> {
@@ -148,6 +154,17 @@ impl<C> GhostdagVerifier<C> {
             client, 
             ghostdag_store,
             orphan_pool: new_shared_orphan_pool(),
+            orphan_tx: None,
+        }
+    }
+
+    pub fn with_orphan_channel(client: Arc<C>, orphan_tx: OrphanSender) -> Self {
+        let ghostdag_store = GhostdagStore::new(client.clone());
+        Self {
+            client,
+            ghostdag_store,
+            orphan_pool: new_shared_orphan_pool(),
+            orphan_tx: Some(orphan_tx),
         }
     }
 }
@@ -325,15 +342,31 @@ impl<C: AuxStore + HeaderBackend<Block> + Send + Sync> Verifier<Block> for Ghost
                     all_parents: all_parents.clone(),
                     block_data: vec![],
                 };
-                
+
                 {
                     let mut pool = self.orphan_pool.write();
-                    let to_request = pool.add_orphan(orphan, missing_parents.clone());
-                    if !to_request.is_empty() {
-                        log::info!("📥 Need to request {} missing parent(s)", to_request.len());
+                    let _ = pool.add_orphan(orphan, missing_parents.clone());
+                }
+
+                // CRITICAL: Send to DagSync to fetch missing parents!
+                if let Some(ref tx) = self.orphan_tx {
+                    if let Some(body) = &block.body {
+                        let full_block = Block::new(block.header.clone(), body.clone());
+                        let signed_block = SignedBlock {
+                            block: full_block,
+                            justifications: block.justifications.clone(),
+                        };
+                        if let Err(e) = tx.try_send((signed_block, missing_parents.clone())) {
+                            log::warn!("Failed to send orphan to DagSync: {:?}", e);
+                        } else {
+                            log::info!("📤 Sent orphan {:?} to DagSync, missing {} parents",
+                                block_h256, missing_parents.len());
+                        }
                     }
                 }
-                
+
+                // Return error to defer - Substrate will retry when parent arrives
+                return Err(format!("DeferredBlock: waiting for {} parents", missing_parents.len()));
                 // Return error to defer - Substrate will retry when parent arrives
                 return Err(format!("DeferredBlock: waiting for {} parents", missing_parents.len()));
             },
@@ -378,6 +411,7 @@ pub fn new_partial(
             Option<Telemetry>,
             Arc<FrontierBackend>,
             FrontierPartialComponents,
+            OrphanReceiver,
         ),
     >,
     ServiceError,
@@ -432,7 +466,11 @@ pub fn new_partial(
     );
 
     // Use GHOSTDAG verifier
-    let verifier = GhostdagVerifier::new(client.clone());
+    // Create orphan channel for Verifier -> DagSync communication
+    let (orphan_tx, orphan_rx) = async_channel::unbounded::<(SignedBlock, Vec<H256>)>();
+
+    // Use GHOSTDAG verifier with orphan channel
+    let verifier = GhostdagVerifier::with_orphan_channel(client.clone(), orphan_tx);
     
     let import_queue = sc_consensus::BasicQueue::new(
         verifier,
@@ -464,7 +502,7 @@ pub fn new_partial(
             filter_pool,
             fee_history_cache,
             fee_history_cache_limit,
-        }),
+        }, orphan_rx),
     })
 }
 
@@ -479,7 +517,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (_, mut telemetry, frontier_backend, frontier_partial),
+        other: (_, mut telemetry, frontier_backend, frontier_partial, orphan_rx),
     } = new_partial(&config)?;
 
     let FrontierPartialComponents {
@@ -580,6 +618,19 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         }
     });
     
+    // 6. Connect orphan channel from Verifier to DagSync
+    let dag_sync_orphan = dag_sync.clone();
+    task_manager.spawn_handle().spawn("dag-orphan-handler", None, async move {
+        while let Ok((signed_block, missing_parents)) = orphan_rx.recv().await {
+            let block_hash = H256::from_slice(signed_block.block.hash().as_ref());
+            log::info!("📥 Orphan handler: processing {:?} with {} missing parents",
+                block_hash, missing_parents.len());
+            if let Err(e) = dag_sync_orphan.on_orphan(signed_block, missing_parents) {
+                log::warn!("DagSync::on_orphan failed: {}", e);
+            }
+        }
+    });
+
     log::info!("🔷 DAG Sync initialized");
 
 
@@ -758,6 +809,29 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     }
                     
                     // ============================================
+                    // 4. Check best block age - dont mine if best block is too old (likely syncing)
+                    let best_hash = mining_client.info().best_hash;
+                    if let Ok(Some(best_header)) = mining_client.header(best_hash) {
+                        // Use block number as proxy for time (1 block ~ 1 second)
+                        let best_number = *best_header.number();
+                        let now_secs = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        
+                        // Estimate: genesis was around Dec 25, 2025
+                        let genesis_time_secs: u64 = 1735113600; // Dec 25, 2025 00:00:00 UTC
+                        let expected_block_time = genesis_time_secs + (best_number as u64);
+                        
+                        // If our best block is more than 60 seconds behind expected, wait
+                        if now_secs > expected_block_time + 60 {
+                            log::debug!("⏸️  Best block #{} is behind (expected ~{}s ago), waiting for sync...",
+                                best_number, now_secs - expected_block_time);
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
+                            continue;
+                        }
+                    }
+
                     // PASSED ALL CHECKS - Safe to mine!
                     // ============================================
                     interval.tick().await;
