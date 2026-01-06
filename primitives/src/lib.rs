@@ -25,20 +25,20 @@ pub const LUMENYX: u128 = 1_000_000_000_000;
 pub const TOTAL_SUPPLY: u128 = 21_000_000 * LUMENYX;
 
 /// Block time in milliseconds: ~1 second (GHOSTDAG)
-pub const BLOCK_TIME_MS: u64 = 1_000;
+pub const BLOCK_TIME_MS: u64 = 3_000;
 
 /// Blocks per day at 1 second block time
-pub const BLOCKS_PER_DAY: u32 = 86_400;
+pub const BLOCKS_PER_DAY: u32 = 28_800;
 
 /// Blocks per year at 1 second block time
-pub const BLOCKS_PER_YEAR: u32 = 31_557_600;
+pub const BLOCKS_PER_YEAR: u32 = 10_519_200;
 
-/// Block reward: 0.083 LUMENYX per block
+/// Block reward: 0.25 LUMENYX per block
 /// ~50% mined in first 4 years like Bitcoin
-pub const BLOCK_REWARD: u128 = 83_181_230_512;
+pub const BLOCK_REWARD: u128 = 249_543_691_536;
 
 /// Blocks per halving: ~4 years at 1 second blocks
-pub const BLOCKS_PER_HALVING: u32 = 126_230_400;
+pub const BLOCKS_PER_HALVING: u32 = 42_076_800;
 
 /// Minimum block reward before stopping emission
 pub const MINIMUM_BLOCK_REWARD: u128 = 1;
