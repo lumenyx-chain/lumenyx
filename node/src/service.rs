@@ -728,20 +728,38 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 let target = difficulty_to_target(difficulty);
                 let mut consecutive_propose_failures: u32 = 0;
                 const MAX_FAILURES_BEFORE_POOL_CLEAR: u32 = 3;
-
                 loop {
-                    // KASPA-STYLE: Only pause if no peers (isolated node)
-                    // GHOSTDAG handles convergence via blue_work - dont block based on block number
+
+                    // ============================================
+                    // SYNC GATE - Must pass ALL checks before mining
+                    // ============================================
+                    
+                    // 1. Are we actively syncing?
                     if mining_sync_service.is_major_syncing() {
-                        log::debug!("⏸️  Major syncing - pausing mining...");
-                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                        log::debug!("⏸️  Syncing in progress...");
+                        tokio::time::sleep(Duration::from_millis(2000)).await;
                         continue;
                     }
-                    if mining_sync_service.num_connected_peers() == 0 {
-                        log::debug!("⏸️  No peers - waiting for connection...");
-                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    
+                    // 2. Do we have peers?
+                    let num_peers = mining_sync_service.num_connected_peers();
+                    if num_peers == 0 {
+                        log::debug!("⏸️  No peers connected...");
+                        tokio::time::sleep(Duration::from_millis(2000)).await;
                         continue;
                     }
+                    // 3. Check GHOSTDAG store - only block if we have blocks but no tips (sync issue)
+                    let tips = mining_store.get_tips();
+                    let our_best_number = mining_client.info().best_number;
+                    if tips.is_empty() && our_best_number > 0 {
+                        log::debug!("⏸️  GHOSTDAG store empty but have blocks - waiting for sync...");
+                        tokio::time::sleep(Duration::from_millis(2000)).await;
+                        continue;
+                    }
+                    
+                    // ============================================
+                    // PASSED ALL CHECKS - Safe to mine!
+                    // ============================================
                     interval.tick().await;
 
                     // Get best block from GHOSTDAG select chain
