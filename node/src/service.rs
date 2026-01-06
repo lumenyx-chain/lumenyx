@@ -807,30 +807,6 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                         continue;
                     }
-                    
-                    // ============================================
-                    // 4. Check best block age - dont mine if best block is too old (likely syncing)
-                    let best_hash = mining_client.info().best_hash;
-                    if let Ok(Some(best_header)) = mining_client.header(best_hash) {
-                        // Use block number as proxy for time (1 block ~ 1 second)
-                        let best_number = *best_header.number();
-                        let now_secs = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
-                        
-                        // Estimate: genesis was around Dec 25, 2025
-                        let genesis_time_secs: u64 = 1735113600; // Dec 25, 2025 00:00:00 UTC
-                        let expected_block_time = genesis_time_secs + (best_number as u64);
-                        
-                        // If our best block is more than 60 seconds behind expected, wait
-                        if now_secs > expected_block_time + 60 {
-                            log::debug!("⏸️  Best block #{} is behind (expected ~{}s ago), waiting for sync...",
-                                best_number, now_secs - expected_block_time);
-                            tokio::time::sleep(Duration::from_millis(2000)).await;
-                            continue;
-                        }
-                    }
 
                     // PASSED ALL CHECKS - Safe to mine!
                     // ============================================
