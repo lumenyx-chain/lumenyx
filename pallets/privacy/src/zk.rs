@@ -45,6 +45,6 @@ impl Groth16Verifier {
             return false;
         }
         // For transfers, we verify the proof but amount is not checked on-chain
-        crate::bn254::verify_transfer_proof(vk_bytes, proof_bytes, nullifier, new_commitment, root, 0)
+        crate::bn254::verify_transfer_proof(vk_bytes, proof_bytes, nullifier, new_commitment, root)
     }
 }

@@ -317,13 +317,13 @@ fn get_merkle_path(tree: &[Vec<Fr>], leaf_index: usize) -> (Vec<Fr>, Vec<bool>) 
 
 fn fr_to_hex(f: &Fr) -> String {
     let mut bytes = Vec::new();
-    f.serialize_compressed(&mut bytes).unwrap();
+    f.serialize_uncompressed(&mut bytes).unwrap();
     hex::encode(bytes)
 }
 
 fn hex_to_fr(s: &str) -> Result<Fr, String> {
     let bytes = hex::decode(s).map_err(|e| e.to_string())?;
-    Fr::deserialize_compressed(&bytes[..]).map_err(|e| e.to_string())
+    Fr::deserialize_uncompressed(&bytes[..]).map_err(|e| e.to_string())
 }
 
 // ==================== MAIN ====================
@@ -354,13 +354,13 @@ fn main() {
             
             // Serialize PK
             let mut pk_bytes = Vec::new();
-            pk.serialize_compressed(&mut pk_bytes).expect("PK serialization failed");
+            pk.serialize_uncompressed(&mut pk_bytes).expect("PK serialization failed");
             fs::write(&pk_output, &pk_bytes).expect("Failed to write PK");
             println!("📁 Proving key: {} ({} bytes)", pk_output, pk_bytes.len());
             
             // Serialize VK
             let mut vk_bytes = Vec::new();
-            vk.serialize_compressed(&mut vk_bytes).expect("VK serialization failed");
+            vk.serialize_uncompressed(&mut vk_bytes).expect("VK serialization failed");
             fs::write(&vk_output, &vk_bytes).expect("Failed to write VK");
             println!("📁 Verification key: {} ({} bytes)", vk_output, vk_bytes.len());
             
@@ -411,7 +411,7 @@ fn main() {
             // Load proving key
             println!("📁 Loading proving key...");
             let pk_bytes = fs::read(&pk_file).expect("Failed to read proving key");
-            let pk = ark_groth16::ProvingKey::<Bn254>::deserialize_compressed(&pk_bytes[..])
+            let pk = ark_groth16::ProvingKey::<Bn254>::deserialize_uncompressed(&pk_bytes[..])
                 .expect("Failed to deserialize PK");
             
             // Parse inputs
@@ -468,7 +468,7 @@ fn main() {
             
             // Serialize
             let mut proof_bytes = Vec::new();
-            proof.serialize_compressed(&mut proof_bytes).unwrap();
+            proof.serialize_uncompressed(&mut proof_bytes).unwrap();
             
             println!("\n📋 Call unshield with:");
             println!("   privacy.unshield(");
@@ -483,11 +483,11 @@ fn main() {
             println!("Verifying proof...");
             
             let vk_bytes = fs::read(&vk_file).expect("Failed to read VK");
-            let vk = ark_groth16::VerifyingKey::<Bn254>::deserialize_compressed(&vk_bytes[..])
+            let vk = ark_groth16::VerifyingKey::<Bn254>::deserialize_uncompressed(&vk_bytes[..])
                 .expect("Failed to deserialize VK");
             
             let proof_bytes = fs::read(&proof).expect("Failed to read proof");
-            let proof = ark_groth16::Proof::<Bn254>::deserialize_compressed(&proof_bytes[..])
+            let proof = ark_groth16::Proof::<Bn254>::deserialize_uncompressed(&proof_bytes[..])
                 .expect("Failed to deserialize proof");
             
             let inputs_json = fs::read_to_string(&inputs).expect("Failed to read inputs");
