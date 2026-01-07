@@ -23,7 +23,7 @@ pub type ChainSpec = sc_service::GenericChainSpec;
 // ============================================
 
 /// Genesis block message - The reason LUMENYX exists
-pub const GENESIS_MESSAGE: &str = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks. LUMENYX: Bitcoin + Ethereum + Kaspa + Zcash in one.";
+pub const GENESIS_MESSAGE: &str = "Banks ended up in the headlines. Today control over digital money sits in a few hands.";
 
 /// Network properties
 pub const TOKEN_DECIMALS: u32 = 12;
