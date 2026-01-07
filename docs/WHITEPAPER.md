@@ -1,144 +1,144 @@
-# LUMENYX: A Peer-to-Peer Electronic Cash System with Privacy
+# LUMENYX
 
-## Abstract
+## A Peer-to-Peer Electronic Cash System
 
-A purely peer-to-peer version of electronic cash with fixed supply, smart contracts, and optional privacy. The network uses GHOSTDAG proof-of-work consensus with 1-3 second blocks. Total supply is limited to 21,000,000 LUMENYX with a halving emission schedule. Users can choose between transparent or shielded transactions. No governance, no team allocation, no venture capital. The code is the law.
+---
 
-## 1. Introduction
+### Abstract
 
-LUMENYX combines the best properties of existing cryptocurrencies:
+A purely peer-to-peer version of electronic cash with fixed supply and smart contracts. The network uses proof-of-work consensus with 2.5 second blocks. Total supply is limited to 21,000,000 LUMENYX with a halving emission schedule. No governance, no team allocation, no venture capital.
 
-- **Bitcoin**: Fixed 21M supply, PoW consensus, halving schedule
-- **Ethereum**: EVM smart contracts, programmability
-- **Kaspa**: GHOSTDAG blockDAG, fast blocks without orphans
-- **Zcash**: ZK-SNARK privacy (optional)
+---
 
-The result is a complete monetary system:
+### 1. Introduction
+
+In 2009, Bitcoin proved that digital scarcity was possible.
+
+In 2015, Ethereum proved that programmable money was possible.
+
+LUMENYX combines both:
 
 - Fixed supply (21,000,000)
 - Smart contracts (EVM compatible)
-- Optional privacy (zero-knowledge proofs)
-- Fast blocks (1-3 seconds)
+- Fast blocks (2.5 seconds)
 - True decentralization (fair launch)
 - Zero governance (code is law)
 
-## 2. GHOSTDAG Consensus
+---
 
-Traditional blockchains discard blocks found simultaneously ("orphans"). This limits throughput and wastes mining work.
+### 2. Consensus
 
-GHOSTDAG (Greedy Heaviest-Observed Sub-DAG) solves this by organizing blocks in a Directed Acyclic Graph:
-```
-    [Block A]
-       /  \
-[Block B]  [Block C]  <- Both valid, both included
-       \  /
-    [Block D]
-```
-
-### Properties
+Proof of Work with LongestChain fork choice.
 
 | Parameter | Value |
 |-----------|-------|
-| K (anticone limit) | 18 |
-| Max parents | 10 |
-| Block time | 1-3 seconds |
+| Block time | 2.5 seconds |
 | Hash function | Blake3 |
+| Fork choice | Longest chain |
 
-### Blue Set Selection
+Anyone with a computer can mine. No stake required. No permission needed.
 
-GHOSTDAG distinguishes "blue" (honest) blocks from "red" (potentially adversarial) blocks using the K-cluster algorithm. Transactions in blue blocks are confirmed; red block transactions may be rejected if conflicting.
+---
 
-### Finality
+### 3. Emission
 
-Probabilistic finality after ~6 blocks (~18 seconds). Like Bitcoin, but faster.
+| Parameter | Value |
+|-----------|-------|
+| Initial reward | ~0.208 LUMENYX |
+| Halving period | 4 years (50,492,160 blocks) |
+| Total supply | 21,000,000 LUMENYX |
 
-## 3. Proof of Work
+Timeline:
+- Year 4: 50% mined (~10.5M)
+- Year 8: 75% mined (~15.75M)
+- Year 12: 87.5% mined (~18.4M)
+- Year 16: 93.75% mined (~19.7M)
 
-Pure PoW mining. No staking, no validators, no permission required.
-```
-hash = Blake3(block_header || nonce)
-if hash < target:
-    block is valid
-```
+Same curve as Bitcoin. Proven model.
 
-Anyone with a CPU can mine. No special hardware required (GPU/ASIC resistance through memory-hard hashing in future versions).
+---
 
-### Difficulty Adjustment
+### 4. Smart Contracts
 
-Dynamic difficulty adjustment every block to maintain 1-3 second block times.
-
-## 4. Transactions
-
-### Standard Transactions
-
-Transparent, traceable on-chain. Compatible with Ethereum tooling.
-
-### Private Transactions (Optional)
-
-Using Groth16 ZK-SNARKs:
-
-1. **Shield**: Convert public LUMENYX to private
-2. **Transfer**: Move private LUMENYX (hidden sender, receiver, amount)
-3. **Unshield**: Convert private LUMENYX back to public
-
-Privacy is optional. Users choose per-transaction.
-
-## 5. Smart Contracts
-
-Full EVM compatibility via Frontier. Deploy Solidity contracts as-is.
+Full EVM compatibility. Deploy Solidity contracts without changes.
 
 | Property | Value |
 |----------|-------|
 | Chain ID | 7777 |
 | Gas model | Ethereum-compatible |
-| Opcodes | Full EVM support |
 
-## 6. Emission Schedule
-
-| Phase | Block Reward | Approximate Duration |
-|-------|--------------|---------------------|
-| Bootstrap | 2.4 LUMENYX | ~12 days |
-| Early | 0.3 LUMENYX | ~30 days |
-| Standard | 0.25 LUMENYX | Halving every ~4 years |
-
-Total supply approaches 21,000,000 asymptotically over 100+ years.
-
-## 7. Distribution
-
-- No premine
-- No ICO/IEO/IDO
-- No team allocation
-- No foundation
-- No venture capital
-- No airdrops
-
-100% distributed through mining.
-
-## 8. Governance
-
-None. The code is the law. No upgrades without hard fork. No admin keys. No sudo. No democracy. No plutocracy.
-
-## 9. Launch Philosophy
-
-Satoshi-style:
-1. Write the code
-2. Launch the network
-3. Disappear
-
-The network must survive without its creator.
-
-## 10. Conclusion
-
-LUMENYX is digital cash for the 21st century:
-
-- Scarce like gold (21M cap)
-- Fast like digital payments (1-3 sec)
-- Private when needed (ZK-SNARKs)
-- Programmable (EVM)
-- Decentralized (PoW, no team)
-
-No promises. No roadmap. No marketing. Just code.
+Everything built on Ethereum can be built on LUMENYX.
 
 ---
 
-*"Banks ended up in the headlines. Today control over digital money sits in a few hands: founders, large holders, intermediaries and those who write the rules."*
+### 5. Transaction Fees
+
+| Parameter | Value |
+|-----------|-------|
+| Fee destination | 100% to miners |
+| Min gas price | 45 planck/gas |
+| Dynamic adjustment | ±10% per block |
+
+Fees stay low. Even if LUMENYX reaches $1000, a simple transfer costs less than $0.001.
+
+---
+
+### 6. Distribution
+
+- No premine
+- No ICO
+- No team allocation
+- No foundation
+- No venture capital
+
+100% distributed through mining. Everyone starts equal.
+
+---
+
+### 7. Governance
+
+None.
+
+The code is the law. No admin keys. No sudo. No upgrades without hard fork.
+
+Like Bitcoin, the protocol is set in stone. Only the community can change it through consensus.
+
+---
+
+### 8. What Can Be Built
+
+The base layer is intentionally simple. Complexity belongs on top.
+
+- Tokens (ERC-20)
+- NFTs (ERC-721)
+- Decentralized exchanges
+- Lending protocols
+- DAOs
+- Games
+- Layer 2 scaling solutions
+- Privacy layers
+- Bridges to other chains
+- Things that don't exist yet
+
+The foundation is yours. Build the future on it.
+
+---
+
+### 9. Conclusion
+
+LUMENYX is digital cash for the next era:
+
+- Scarce (21M cap)
+- Fast (2.5 sec blocks)
+- Programmable (EVM)
+- Decentralized (PoW, no team)
+
+No promises. No roadmap. No marketing.
+
+Just code and consensus.
+
+---
+
+> *"Banks ended up in the headlines. Today control over digital money sits in a few hands: founders, large holders, intermediaries and those who write the rules."*
+
+This ends now.

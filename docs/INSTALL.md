@@ -1,98 +1,91 @@
-# LUMENYX Installation Guide
+# LUMENYX Installation
 
-## System Requirements
+---
+
+## Requirements
 
 ### Minimum
-- **CPU**: 4 cores
-- **RAM**: 8 GB
-- **Storage**: 100 GB SSD
-- **Network**: 10 Mbps
+- CPU: 4 cores
+- RAM: 8 GB
+- Storage: 100 GB SSD
+- Network: 10 Mbps
 
 ### Recommended
-- **CPU**: 8+ cores
-- **RAM**: 16 GB
-- **Storage**: 500 GB NVMe SSD
-- **Network**: 100 Mbps
+- CPU: 8+ cores
+- RAM: 16 GB
+- Storage: 500 GB NVMe SSD
+- Network: 100 Mbps
 
-## Build from Source
+---
 
-### 1. Install Dependencies
+## Build
 
-#### Ubuntu/Debian
+### Ubuntu/Debian
 ```bash
+# Install dependencies
 sudo apt update
 sudo apt install -y build-essential git clang curl libssl-dev llvm libudev-dev protobuf-compiler
 
 # Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
-```
 
-#### macOS
-```bash
-brew install openssl protobuf
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
-```
-
-### 2. Clone and Build
-```bash
+# Clone and build
 git clone https://github.com/lumenyx-chain/lumenyx
 cd lumenyx
 cargo build --release
 ```
 
-Build takes 10-30 minutes depending on hardware.
-
-### 3. Run
-
-#### Full Node (sync only)
+### macOS
 ```bash
-./target/release/lumenyx-node --chain mainnet --name "my-node"
+brew install openssl protobuf
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
+git clone https://github.com/lumenyx-chain/lumenyx
+cd lumenyx
+cargo build --release
 ```
 
-#### Miner (produces blocks)
+Build takes 10-30 minutes.
+
+---
+
+## Run
+
+### Full Node (sync only)
 ```bash
-./target/release/lumenyx-node --chain mainnet --mine --name "my-miner"
+./target/release/lumenyx-node --chain mainnet --name "your-node"
 ```
 
-## Configuration Options
+### Miner
+```bash
+./target/release/lumenyx-node --chain mainnet --mine --name "your-miner"
+```
+
+That's it. You're mining.
+
+---
+
+## Options
 
 | Flag | Description |
 |------|-------------|
-| `--chain mainnet` | Use mainnet (default) |
-| `--chain dev` | Development mode (local) |
+| `--chain mainnet` | Mainnet |
+| `--chain dev` | Development mode |
 | `--mine` | Enable mining |
-| `--name "name"` | Node name (shows in telemetry) |
+| `--name "name"` | Node name |
 | `--rpc-cors all` | Allow RPC from any origin |
 | `--rpc-external` | Expose RPC externally |
 
-## Verify Installation
+---
+
+## Verify
 ```bash
-# Check version
 ./target/release/lumenyx-node --version
-
-# Run in dev mode (instant blocks, local only)
-./target/release/lumenyx-node --dev --tmp
 ```
 
-You should see:
-```
-🔷 GHOSTDAG: K=18, target=1000ms, difficulty=100
-⛏️  Starting GHOSTDAG block production...
-✅ Block #1 imported!
-```
-
-## Troubleshooting
-
-### Build fails with memory error
-Increase swap or use `cargo build --release -j 2` (fewer parallel jobs)
-
-### Cannot connect to peers
-Check firewall - port 30333 must be open for P2P
-
-### RPC not accessible
-Add `--rpc-external --rpc-cors all`
+---
 
 ## Data Directories
 
@@ -103,3 +96,26 @@ Add `--rpc-external --rpc-cors all`
 | Windows | `%APPDATA%\lumenyx-node\` |
 
 To reset: delete the data directory and restart.
+
+---
+
+## Troubleshooting
+
+**Build fails with memory error**
+```bash
+cargo build --release -j 2
+```
+
+**Cannot connect to peers**
+- Check firewall: port 30333 must be open
+
+**RPC not accessible**
+```bash
+--rpc-external --rpc-cors all
+```
+
+---
+
+No registration. No staking. No permission.
+
+Just run and mine.
