@@ -1,13 +1,11 @@
-//! # LUMENYX Chain Specification - GHOSTDAG PoW
+//! # LUMENYX Chain Specification - PoW LongestChain
 //!
 //! Defines genesis configuration for development, testnet, and mainnet.
 //!
-//! ## GHOSTDAG PoW
 //! - No authorities needed - anyone can mine
 //! - Total Supply: 21,000,000 LUMENYX
-//! - Distribution: 100% through mining (block rewards)
-//! - No pre-allocations. No reserves. Pure fair launch.
-//! - Truly permissionless: just run the node and mine!
+//! - Distribution: 100% through mining
+//! - No pre-allocations. Pure fair launch.
 
 use sc_service::ChainType;
 use sp_core::{sr25519, Pair, Public};
@@ -28,9 +26,6 @@ pub const GENESIS_MESSAGE: &str = "Banks ended up in the headlines. Today contro
 /// Network properties
 pub const TOKEN_DECIMALS: u32 = 12;
 pub const TOKEN_SYMBOL: &str = "LUMENYX";
-
-/// Initial PoW difficulty
-pub const INITIAL_DIFFICULTY: u64 = 1_000_000;
 
 // ============================================
 // HELPER FUNCTIONS
@@ -62,8 +57,6 @@ fn development_genesis(
         "balances": {
             "balances": endowed_accounts.iter().cloned().map(|k| (k, 1u128 << 60)).collect::<Vec<_>>(),
         },
-        // NO AURA - GHOSTDAG PoW!
-        // NO SESSION - No authorities needed!
         "evm": {
             "accounts": {
                 "0xd43593c715fdd31c61141abd04a99fd6822c8558": {
@@ -122,17 +115,15 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 }
 
 // ============================================
-// MAINNET CONFIG - GHOSTDAG PoW - TRULY PERMISSIONLESS!
+// MAINNET CONFIG - PoW - TRULY PERMISSIONLESS!
 // ============================================
 
-/// ✅ Genesis allocation: 100% Mining (fair launch)
+/// Genesis allocation: 100% Mining (fair launch)
 /// No pre-allocations. All coins from block rewards.
 ///
 /// HOW TO MINE:
 /// 1. Run: ./lumenyx-node --chain mainnet --mine
 /// 2. That's it! You're mining LUMENYX.
-///
-/// No authorities. No validators. Just PoW.
 fn mainnet_genesis() -> serde_json::Value {
     // Faucet allocation: 5000 LUMENYX for bootstrap
     let faucet_pallet_id: PalletId = PalletId(*b"valifauc");
@@ -146,23 +137,19 @@ fn mainnet_genesis() -> serde_json::Value {
         "balances": {
             "balances": genesis_allocations,
         },
-        // NO AURA - GHOSTDAG PoW!
-        // NO SESSION - No authorities needed!
-        // NO GRANDPA - Probabilistic finality via PoW!
         "evm": {
             "accounts": {}
         },
     })
 }
 
-/// ✅ REAL Mainnet configuration - GHOSTDAG PoW
+/// REAL Mainnet configuration - PoW LongestChain
 ///
-/// LUMENYX - The Unstoppable Chain
+/// LUMENYX - Decentralized Blockchain
 /// - 21M supply (like Bitcoin)
-/// - GHOSTDAG PoW consensus (like Kaspa)
-/// - 1-3 second blocks
+/// - PoW consensus
+/// - 2.5 second blocks
 /// - EVM smart contracts
-/// - ZK-SNARKs privacy (optional)
 /// - No team, no governance, no authorities
 ///
 /// Anyone can mine by running:
@@ -180,7 +167,7 @@ pub fn mainnet_config() -> Result<ChainSpec, String> {
     .build())
 }
 
-/// ✅ Testnet config - for testing before mainnet
+/// Testnet config - for testing before mainnet
 pub fn testnet_config() -> Result<ChainSpec, String> {
     Ok(ChainSpec::builder(
         WASM_BINARY.ok_or_else(|| "WASM binary not available".to_string())?,
@@ -203,7 +190,5 @@ fn chain_properties() -> serde_json::Map<String, serde_json::Value> {
     properties.insert("tokenSymbol".into(), TOKEN_SYMBOL.into());
     properties.insert("tokenDecimals".into(), TOKEN_DECIMALS.into());
     properties.insert("ss58Format".into(), 42.into());
-    // GHOSTDAG specific
-    properties.insert("powDifficulty".into(), INITIAL_DIFFICULTY.into());
     properties
 }

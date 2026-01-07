@@ -17,7 +17,6 @@ hex-literal = "0.4"
 sp-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-block-builder = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-consensus-aura = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
-# NO sp-consensus-grandpa - UNSTOPPABLE like Bitcoin!
 sp-core = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-inherents = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-offchain = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
@@ -38,7 +37,6 @@ frame-executive = { git = "https://github.com/paritytech/polkadot-sdk", branch =
 
 # Pallets
 pallet-aura = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
-# NO pallet-grandpa - UNSTOPPABLE like Bitcoin!
 pallet-balances = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 pallet-timestamp = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 pallet-transaction-payment = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
@@ -46,9 +44,7 @@ pallet-transaction-payment-rpc-runtime-api = { git = "https://github.com/parityt
 pallet-authorship = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 pallet-session = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 
-# ============================================
-# FRONTIER EVM - Ethereum Compatibility
-# ============================================
+# Frontier EVM
 fp-rpc = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409", default-features = false }
 fp-self-contained = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409", default-features = false, features = ["serde"] }
 fp-evm = { git = "https://github.com/polkadot-evm/frontier", branch = "stable2409", default-features = false }
@@ -65,7 +61,6 @@ pallet-evm-precompile-blake2 = { git = "https://github.com/polkadot-evm/frontier
 # LUMENYX Custom
 lumenyx-primitives = { path = "../primitives", default-features = false }
 pallet-halving = { path = "../pallets/halving", default-features = false }
-pallet-privacy = { path = "../pallets/privacy", default-features = false }
 
 [features]
 default = ["std"]
@@ -76,7 +71,6 @@ std = [
     "sp-api/std",
     "sp-block-builder/std",
     "sp-consensus-aura/std",
-    # NO sp-consensus-grandpa/std
     "sp-core/std",
     "sp-inherents/std",
     "sp-offchain/std",
@@ -93,14 +87,12 @@ std = [
     "frame-system-rpc-runtime-api/std",
     "frame-executive/std",
     "pallet-aura/std",
-    # NO pallet-grandpa/std
     "pallet-balances/std",
     "pallet-timestamp/std",
     "pallet-transaction-payment/std",
     "pallet-transaction-payment-rpc-runtime-api/std",
     "pallet-authorship/std",
     "pallet-session/std",
-    # Frontier EVM
     "fp-rpc/std",
     "fp-self-contained/std",
     "fp-evm/std",
@@ -112,9 +104,7 @@ std = [
     "pallet-evm-precompile-sha3fips/std",
     "pallet-evm-precompile-bn128/std",
     "pallet-evm-precompile-blake2/std",
-    # LUMENYX
     "lumenyx-primitives/std",
     "pallet-halving/std",
-    "pallet-privacy/std",
     "substrate-wasm-builder",
 ]

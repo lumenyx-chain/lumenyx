@@ -1,17 +1,14 @@
-//! LUMENYX Service Configuration - GHOSTDAG PoW with proper fork choice
+//! LUMENYX Service Configuration - PoW LongestChain
 //!
-//! 1. Uses LongestChain for fork choice
-//! 2. Verifier processes blocks through GHOSTDAG (calculates blue_score/blue_work)
-//! 3. Fork choice based on blue_work, not block number
-//! 4. All blocks (own + received) are added to DAG store
+//! Simple PoW consensus with LongestChain fork choice.
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use std::fs;
 use sp_core::{sr25519, Pair, crypto::Ss58Codec, H256};
 use sp_runtime::generic::DigestItem;
-use codec::{Encode, Decode};
+use codec::Encode;
 
-use futures::prelude::*;
+use futures::StreamExt;
 use lumenyx_runtime::{self, opaque::Block, RuntimeApi};
 use sc_client_api::{BlockBackend, BlockchainEvents, AuxStore, HeaderBackend};
 use sc_consensus::{BlockImportParams, import_queue::Verifier, BlockImport};
@@ -25,11 +22,8 @@ use sp_consensus::{BlockOrigin, SelectChain, SyncOracle};
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT};
 use sp_api::ProvideRuntimeApi;
 
-
-
-
 // Frontier imports
-use fc_mapping_sync::{EthereumBlockNotification, EthereumBlockNotificationSinks, SyncStrategy, kv::MappingSyncWorker};
+use fc_mapping_sync::{EthereumBlockNotificationSinks, EthereumBlockNotification, SyncStrategy, kv::MappingSyncWorker};
 use fc_rpc::EthTask;
 use fc_rpc_core::types::{FeeHistoryCache, FeeHistoryCacheLimit, FilterPool};
 use fc_storage::StorageOverrideHandler;
@@ -49,23 +43,16 @@ pub struct FrontierPartialComponents {
     pub fee_history_cache_limit: FeeHistoryCacheLimit,
 }
 
-const GHOSTDAG_K: u64 = 18;
-const TARGET_BLOCK_TIME_MS: u64 = 3000;
+const TARGET_BLOCK_TIME_MS: u64 = 2500;
 const INITIAL_DIFFICULTY: u64 = 100;
 
-/// GHOSTDAG Engine ID for digests
-const GHOSTDAG_ENGINE_ID: sp_runtime::ConsensusEngineId = *b"GDAG";
+/// LUMENYX Engine ID for digests
+const LUMENYX_ENGINE_ID: sp_runtime::ConsensusEngineId = *b"LMNX";
 
 /// Miner address digest structure
 #[derive(Clone, codec::Encode, codec::Decode)]
 struct MinerAddressDigest {
     miner: [u8; 32],
-}
-
-/// DAG parents digest - for multi-parent blocks
-#[derive(Clone, codec::Encode, codec::Decode)]
-struct DagParentsDigest {
-    parents: Vec<H256>,
 }
 
 /// Load or generate miner keypair
@@ -127,7 +114,6 @@ fn hash_meets_target(hash: &H256, target: &H256) -> bool {
     hash.as_bytes() <= target.as_bytes()
 }
 
-/// GHOSTDAG Verifier - processes blocks through DAG and sets fork choice
 /// Simple verifier - accepts all valid blocks using LongestChain
 pub struct SimpleVerifier;
 
@@ -137,7 +123,6 @@ impl Verifier<Block> for SimpleVerifier {
         &self,
         mut block: BlockImportParams<Block>,
     ) -> Result<BlockImportParams<Block>, String> {
-        // Use LongestChain fork choice - higher block number wins
         block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::LongestChain);
         Ok(block)
     }
@@ -157,12 +142,10 @@ pub fn new_partial(
             Option<Telemetry>,
             Arc<FrontierBackend>,
             FrontierPartialComponents,
-
         ),
     >,
     ServiceError,
 > {
-    // Auto-create network key
     let network_path = config.network.net_config_path.clone()
         .unwrap_or_else(|| config.base_path.config_dir(config.chain_spec.id()))
         .join("network");
@@ -200,7 +183,6 @@ pub fn new_partial(
         telemetry
     });
 
-    // Use GHOSTDAG select chain instead of LongestChain
     let select_chain = sc_consensus::LongestChain::new(backend.clone());
 
     let transaction_pool = sc_transaction_pool::BasicPool::new_full(
@@ -211,10 +193,6 @@ pub fn new_partial(
         client.clone(),
     );
 
-    // Use GHOSTDAG verifier
-    // Use simple verifier (no GHOSTDAG)
-
-    // Use GHOSTDAG verifier with orphan channel
     let verifier = SimpleVerifier;
     
     let import_queue = sc_consensus::BasicQueue::new(
@@ -231,51 +209,37 @@ pub fn new_partial(
         &db_config_dir(&config),
     )?)));
 
-    let filter_pool: Option<FilterPool> = Some(Arc::new(std::sync::Mutex::new(BTreeMap::new())));
-    let fee_history_cache: FeeHistoryCache = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
-    let fee_history_cache_limit: FeeHistoryCacheLimit = 2048;
+    let frontier_partial = FrontierPartialComponents {
+        filter_pool: Some(Arc::new(std::sync::Mutex::new(BTreeMap::new()))),
+        fee_history_cache: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+        fee_history_cache_limit: 2048,
+    };
 
     Ok(sc_service::PartialComponents {
         client: client.clone(),
         backend,
         task_manager,
-        import_queue,
         keystore_container,
         select_chain,
+        import_queue,
         transaction_pool,
-        other: (client, telemetry, frontier_backend, FrontierPartialComponents {
-            filter_pool,
-            fee_history_cache,
-            fee_history_cache_limit,
-        }),
+        other: (client, telemetry, frontier_backend, frontier_partial),
     })
 }
 
 pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
-    let miner_base_path = config.base_path.path().to_path_buf();
-    
     let sc_service::PartialComponents {
         client,
         backend,
         mut task_manager,
-        import_queue,
         keystore_container,
         select_chain,
+        import_queue,
         transaction_pool,
         other: (_, mut telemetry, frontier_backend, frontier_partial),
     } = new_partial(&config)?;
 
-    let FrontierPartialComponents {
-        filter_pool,
-        fee_history_cache,
-        fee_history_cache_limit,
-    } = frontier_partial;
-
-    let mut net_config = sc_network::config::FullNetworkConfiguration::<
-        Block,
-        <Block as BlockT>::Hash,
-        sc_network::NetworkWorker<Block, <Block as BlockT>::Hash>,
-    >::new(&config.network, config.prometheus_registry().cloned());
+    let net_config = sc_network::config::FullNetworkConfiguration::<Block, <Block as BlockT>::Hash, sc_network::NetworkWorker<Block, <Block as BlockT>::Hash>>::new(&config.network, config.prometheus_registry().cloned());
 
     let metrics = sc_network::NotificationMetrics::new(config.prometheus_registry());
 
@@ -293,22 +257,24 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             metrics,
         })?;
 
-
     let role = config.role;
     let force_authoring = config.force_authoring;
+    let miner_base_path = config.base_path.path().to_path_buf();
     let prometheus_registry = config.prometheus_registry().cloned();
 
-
-    let pubsub_notification_sinks: Arc<EthereumBlockNotificationSinks<EthereumBlockNotification<Block>>> = Default::default();
     let storage_override = Arc::new(StorageOverrideHandler::new(client.clone()));
-
     let block_data_cache = Arc::new(fc_rpc::EthBlockDataCacheTask::new(
         task_manager.spawn_handle(),
         storage_override.clone(),
-        50, 50,
+        50,
+        50,
         prometheus_registry.clone(),
     ));
 
+    let pubsub_notification_sinks: Arc<EthereumBlockNotificationSinks<EthereumBlockNotification<Block>>> = Default::default();
+
+
+    // Spawn Frontier EVM mapping sync worker
     match &*frontier_backend {
         fc_db::Backend::KeyValue(b) => {
             task_manager.spawn_essential_handle().spawn(
@@ -321,64 +287,78 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     backend.clone(),
                     storage_override.clone(),
                     b.clone(),
-                    3, 0u32.into(),
+                    3,
+                    0u32.into(),
                     SyncStrategy::Normal,
                     sync_service.clone(),
                     pubsub_notification_sinks.clone(),
                 ).for_each(|()| futures::future::ready(())),
             );
         }
-        _ => {}
     }
-
+    // Spawn Frontier EVM mapping sync worker
+    // Spawn Frontier fee history task
     task_manager.spawn_essential_handle().spawn(
-        "frontier-fee-history", None,
-        EthTask::fee_history_task(client.clone(), storage_override.clone(), fee_history_cache.clone(), fee_history_cache_limit),
+        "frontier-fee-history",
+        None,
+        EthTask::fee_history_task(
+            client.clone(),
+            storage_override.clone(),
+            frontier_partial.fee_history_cache.clone(),
+            frontier_partial.fee_history_cache_limit,
+        ),
     );
+
+    let filter_pool = frontier_partial.filter_pool.clone();
+    let fee_history_cache = frontier_partial.fee_history_cache.clone();
+    let fee_history_cache_limit = frontier_partial.fee_history_cache_limit;
 
     let rpc_extensions_builder = {
         let client = client.clone();
         let pool = transaction_pool.clone();
-        let graph = transaction_pool.pool().clone();
         let network = network.clone();
-        let sync = sync_service.clone();
+        let sync_service = sync_service.clone();
         let frontier_backend = frontier_backend.clone();
         let storage_override = storage_override.clone();
         let block_data_cache = block_data_cache.clone();
         let filter_pool = filter_pool.clone();
         let fee_history_cache = fee_history_cache.clone();
         let pubsub_notification_sinks = pubsub_notification_sinks.clone();
-        let is_authority = config.role.is_authority();
 
         Box::new(move |subscription_task_executor| {
             let eth_deps = crate::rpc::EthDeps {
                 client: client.clone(),
                 pool: pool.clone(),
-                graph: graph.clone(),
+                graph: pool.pool().clone(),
                 converter: Some(lumenyx_runtime::TransactionConverter::<Block>::default()),
-                is_authority,
+                is_authority: role.is_authority(),
                 enable_dev_signer: false,
                 network: network.clone(),
-                sync: sync.clone(),
-                frontier_backend: match &*frontier_backend {
-                    fc_db::Backend::KeyValue(b) => b.clone(),
-                    _ => unreachable!(),
-                },
+                sync: sync_service.clone(),
+                frontier_backend: match &*frontier_backend { fc_db::Backend::KeyValue(b) => b.clone(), _ => unreachable!(), },
                 storage_override: storage_override.clone(),
                 block_data_cache: block_data_cache.clone(),
                 filter_pool: filter_pool.clone(),
                 max_past_logs: 10000,
                 fee_history_cache: fee_history_cache.clone(),
-                fee_history_cache_limit,
+                fee_history_cache_limit: fee_history_cache_limit,
                 execute_gas_limit_multiplier: 10,
                 forced_parent_hashes: None,
                 pending_create_inherent_data_providers: move |_, ()| async move {
-                    Ok(sp_timestamp::InherentDataProvider::from_system_time())
+                    let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
+                    Ok(timestamp)
                 },
             };
 
+            let deps = crate::rpc::FullDeps {
+                client: client.clone(),
+                pool: pool.clone(),
+                deny_unsafe: sc_rpc::DenyUnsafe::No,
+                eth: eth_deps,
+            };
+
             crate::rpc::create_full(
-                crate::rpc::FullDeps { client: client.clone(), pool: pool.clone(), deny_unsafe: crate::rpc::DenyUnsafe::No, eth: eth_deps },
+                deps,
                 subscription_task_executor,
                 pubsub_notification_sinks.clone(),
             ).map_err(Into::into)
@@ -401,7 +381,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     })?;
 
     // ============================================
-    // GHOSTDAG MINING
+    // POW MINING
     // ============================================
     if role.is_authority() || force_authoring {
         use sp_consensus::{Environment, Proposer};
@@ -411,7 +391,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         let miner_pair = get_or_create_miner_key(&miner_base_path);
         let miner_address: [u8; 32] = miner_pair.public().0;
         log::info!("💰 Mining rewards to: {}", miner_pair.public().to_ss58check());
-        log::info!("⛏️  Starting GHOSTDAG miner...");
+        log::info!("⛏️  Starting PoW miner...");
 
         let mut proposer_factory = ProposerFactory::new(
             task_manager.spawn_handle(),
@@ -438,25 +418,14 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 const MAX_FAILURES_BEFORE_POOL_CLEAR: u32 = 3;
 
                 loop {
-                    // ============================================
-                    // SYNC GATE - Must pass ALL checks before mining
-                    // ============================================
-
-                    // 1. Are we actively syncing?
                     if mining_sync_service.is_major_syncing() {
                         log::debug!("⏸️  Syncing in progress...");
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                         continue;
                     }
 
-                    // 2. Do we have peers? (skip for first node)
-                    // let num_peers = mining_sync_service.num_connected_peers();
-                    // First node needs to mine without peers
-
-                    // PASSED ALL CHECKS - Safe to mine!
                     interval.tick().await;
 
-                    // Get best block from LongestChain
                     let best_header = match select_chain_mining.best_chain().await {
                         Ok(h) => h,
                         Err(e) => {
@@ -468,7 +437,6 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     let parent_hash = best_header.hash();
                     let parent_number = *best_header.number();
 
-                    // Create inherent data
                     let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
                     let inherent_data = match timestamp.create_inherent_data().await {
                         Ok(d) => d,
@@ -478,7 +446,6 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                         }
                     };
 
-                    // Create proposer
                     let proposer = match proposer_factory.init(&best_header).await {
                         Ok(p) => p,
                         Err(e) => {
@@ -487,13 +454,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                         }
                     };
 
-                    // Build digest with miner address
                     let miner_digest = MinerAddressDigest { miner: miner_address };
                     let digest = sp_runtime::generic::Digest {
-                        logs: vec![DigestItem::PreRuntime(GHOSTDAG_ENGINE_ID, miner_digest.encode())],
+                        logs: vec![DigestItem::PreRuntime(LUMENYX_ENGINE_ID, miner_digest.encode())],
                     };
 
-                    // Propose block
                     let proposal = match proposer.propose(
                         inherent_data,
                         digest,
@@ -521,7 +486,6 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     let (header, body) = block.deconstruct();
                     let header_hash = header.hash();
 
-                    // Mine: find valid nonce
                     let mut nonce = [0u8; 32];
                     let seed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -539,7 +503,6 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                         let pow_hash = compute_pow_hash(header_hash.as_ref(), &nonce);
 
                         if hash_meets_target(&pow_hash, &target) {
-                            // Import block with LongestChain fork choice
                             let mut import_params = BlockImportParams::new(BlockOrigin::Own, header.clone());
                             import_params.body = Some(body.clone());
                             import_params.state_action = sc_consensus::StateAction::ApplyChanges(
@@ -578,7 +541,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         log::info!("📡 Sync-only mode (not mining)");
     }
 
-    log::info!("✅ LUMENYX GHOSTDAG running!");
+    log::info!("✅ LUMENYX PoW running!");
     network_starter.start_network();
     Ok(task_manager)
 }

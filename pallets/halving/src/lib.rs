@@ -1,11 +1,11 @@
 //! # LUMENYX Emission Pallet
 //!
 //! Simple emission like Bitcoin:
-//! - 0.083 LUMENYX per block from genesis
-//! - Halving every ~4 years (42,076,800 blocks)
+//! - ~0.208 LUMENYX per block from genesis
+//! - Halving every 4 years (50,492,160 blocks)
 //! - Total supply: 21,000,000 LUMENYX (immutable)
 //!
-//! Daily emission: 14,400 LUMENYX (28,800 blocks * 0.5)
+//! Daily emission: ~7,187 LUMENYX (34,560 blocks * 0.208)
 //! ~50% mined in first 4 years
 
 #![cfg_attr(not(feature = "std"), no_std)]

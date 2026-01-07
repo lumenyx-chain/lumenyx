@@ -1,6 +1,6 @@
 //! LUMENYX Core Primitives
 //!
-//! Privacy-first cryptocurrency with ZK-SNARKs.
+//! Decentralized cryptocurrency with fixed supply.
 //! 21M fixed supply, no team, no foundation. Just code.
 
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -24,42 +24,30 @@ pub const LUMENYX: u128 = 1_000_000_000_000;
 /// Total supply: 21,000,000 LUMENYX (fixed, NEVER MORE)
 pub const TOTAL_SUPPLY: u128 = 21_000_000 * LUMENYX;
 
-/// Block time in milliseconds: ~1 second (GHOSTDAG)
-pub const BLOCK_TIME_MS: u64 = 3_000;
+/// Block time in milliseconds: 2.5 seconds
+pub const BLOCK_TIME_MS: u64 = 2_500;
 
-/// Blocks per day at 1 second block time
-pub const BLOCKS_PER_DAY: u32 = 28_800;
+/// Blocks per day (86400 / 2.5 = 34560)
+pub const BLOCKS_PER_DAY: u32 = 34_560;
 
-/// Blocks per year at 1 second block time
-pub const BLOCKS_PER_YEAR: u32 = 10_519_200;
+/// Blocks per year (34560 * 365.25 = 12,623,040)
+pub const BLOCKS_PER_YEAR: u32 = 12_623_040;
 
-/// Block reward: 0.25 LUMENYX per block
-/// ~50% mined in first 4 years like Bitcoin
-pub const BLOCK_REWARD: u128 = 249_543_691_536;
+/// Block reward: ~0.208 LUMENYX per block
+/// Calculated for 50% supply in 4 years with halving
+pub const BLOCK_REWARD: u128 = 207_953_080_000;
 
-/// Blocks per halving: ~4 years at 1 second blocks
-pub const BLOCKS_PER_HALVING: u32 = 42_076_800;
+/// Blocks per halving: 4 years exactly (12,623,040 * 4)
+pub const BLOCKS_PER_HALVING: u32 = 50_492_160;
 
 /// Minimum block reward before stopping emission
 pub const MINIMUM_BLOCK_REWARD: u128 = 1;
 
-/// Base fee for simple transfer: ~0.00000005 LUMENYX
+/// Base fee for simple transfer
 pub const BASE_TRANSFER_FEE: u128 = 1_000_000;
 
 /// Fee for smart contract execution
 pub const BASE_CONTRACT_FEE: u128 = 10_000_000;
-
-/// Fee for privacy (ZK) transaction
-pub const BASE_PRIVACY_FEE: u128 = 100_000_000;
-
-/// Minimum stake to become validator: 1 LUMENYX
-pub const MIN_VALIDATOR_STAKE: u128 = 1 * LUMENYX;
-
-/// Slashing percentage for misbehavior: 30%
-pub const SLASHING_PERCENT: u32 = 30;
-
-/// Unbonding period: 28 days (in blocks)
-pub const UNBONDING_PERIOD: u32 = 28 * BLOCKS_PER_DAY;
 
 pub type BlockNumber = u32;
 pub type Balance = u128;
@@ -68,13 +56,6 @@ pub type Index = u32;
 pub type Hash = sp_core::H256;
 pub type Signature = MultiSignature;
 pub type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
-
-#[derive(Clone, Copy, Debug, Encode, Decode, TypeInfo, MaxEncodedLen, PartialEq, Eq, Default)]
-pub enum PrivacyMode {
-    #[default]
-    Transparent,
-    Shielded,
-}
 
 pub fn calculate_block_reward(block_number: BlockNumber) -> Balance {
     let halvings = block_number / BLOCKS_PER_HALVING;
@@ -135,8 +116,16 @@ mod tests {
     }
 
     #[test]
+    fn test_halving_period() {
+        // 4 years = 50,492,160 blocks
+        assert_eq!(BLOCKS_PER_HALVING, 50_492_160);
+    }
+
+    #[test]
     fn test_daily_emission() {
+        // ~7,187 LUMENYX per day
         let daily = daily_emission(0);
-        assert_eq!(daily, 83_000_000_000 * 86_400);
+        let daily_lumenyx = daily / LUMENYX;
+        assert!(daily_lumenyx >= 7000 && daily_lumenyx <= 7500);
     }
 }

@@ -1,15 +1,10 @@
 //! LUMENYX Runtime
 //!
-//! The unstoppable blockchain - the unstoppable chain:
+//! Decentralized blockchain:
 //! - Fixed supply (21M)
-//! - 3 second blocks (GHOSTDAG consensus)
-//! - 18 second finality (1-3 second blocks)
-//! - Privacy (ZK optional)
+//! - 2.5 second blocks (PoW LongestChain)
 //! - Smart contracts (EVM compatible)
 //! - True decentralization (fair launch, no governance)
-//! - Permissionless validation (anyone can become validator!)
-//! - NO GRANDPA = NEVER STOPS (GHOSTDAG DAG-based finality)
-
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![recursion_limit = "256"]
@@ -43,11 +38,23 @@ use frame_support::{
 use pallet_transaction_payment::FungibleAdapter;
 
 // ============================================
-// GHOSTDAG DAG DIGEST
+// MINER ADDRESS DIGEST FOR PoW
 // ============================================
-pub mod dag_digest;
-pub use dag_digest::{DagParentsDigest, GhostdagPreDigest, GhostdagSeal, GHOSTDAG_ENGINE_ID};
 
+/// Engine ID for LUMENYX PoW consensus
+pub const LUMENYX_ENGINE_ID: sp_runtime::ConsensusEngineId = *b"LMNX";
+
+/// Digest to identify block miner for reward distribution
+#[derive(Clone, codec::Encode, codec::Decode, scale_info::TypeInfo)]
+pub struct MinerAddressDigest {
+    pub miner: [u8; 32],
+}
+
+impl MinerAddressDigest {
+    pub fn new(miner: [u8; 32]) -> Self {
+        Self { miner }
+    }
+}
 
 // ============================================
 // FRONTIER EVM IMPORTS
@@ -68,27 +75,22 @@ pub type Balance = u128;
 pub type Nonce = u32;
 pub type Hash = sp_core::H256;
 
-/// Block time: 3 seconds (3000ms) - Fast like BNB!
-pub const MILLISECS_PER_BLOCK: u64 = 3000;
+/// Block time: 2.5 seconds (2500ms)
+pub const MILLISECS_PER_BLOCK: u64 = 2500;
 pub const SLOT_DURATION: u64 = MILLISECS_PER_BLOCK;
 
 /// Minimum balance to keep account alive
 pub const EXISTENTIAL_DEPOSIT: Balance = 500;
 
 /// EVM Chain ID - unique identifier for LUMENYX
-/// Using 7777 as a memorable chain ID
 pub const EVM_CHAIN_ID: u64 = 7777;
-
-/// Number of sessions a validator can be inactive (not producing blocks) before removal
-/// 50 sessions * 10 blocks/session * 3 sec/block = 25 minutes
-pub const MAX_INACTIVE_SESSIONS: u32 = 50;
 
 #[sp_version::runtime_version]
 pub const RUNTIME_VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: sp_runtime::create_runtime_str!("lumenyx"),
     impl_name: sp_runtime::create_runtime_str!("lumenyx-node"),
     authoring_version: 1,
-    spec_version: 305,  // NO GRANDPA version
+    spec_version: 306,
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 2,
@@ -100,7 +102,7 @@ parameter_types! {
     pub const Version: RuntimeVersion = RUNTIME_VERSION;
     pub BlockWeights: frame_system::limits::BlockWeights =
         frame_system::limits::BlockWeights::simple_max(
-            Weight::from_parts(WEIGHT_REF_TIME_PER_SECOND * 2, u64::MAX)
+            Weight::from_parts(WEIGHT_REF_TIME_PER_SECOND * 12 / 10, u64::MAX)
         );
     pub BlockLength: frame_system::limits::BlockLength =
         frame_system::limits::BlockLength::max_with_normal_ratio(
@@ -135,8 +137,6 @@ impl frame_system::Config for Runtime {
     type OnSetCode = ();
     type MaxConsumers = ConstU32<16>;
 }
-
-// ============================================
 
 impl pallet_timestamp::Config for Runtime {
     type Moment = u64;
@@ -189,18 +189,18 @@ impl pallet_transaction_payment::Config for Runtime {
     type FeeMultiplierUpdate = ();
 }
 
-/// Find block author for GHOSTDAG PoW
-pub struct GhostdagAuthorFinder;
-impl FindAuthor<AccountId> for GhostdagAuthorFinder {
+/// Find block author for PoW
+pub struct PowAuthorFinder;
+impl FindAuthor<AccountId> for PowAuthorFinder {
     fn find_author<'a, I>(digests: I) -> Option<AccountId>
     where
         I: 'a + IntoIterator<Item = (sp_runtime::ConsensusEngineId, &'a [u8])>,
     {
         use codec::Decode;
-        // Look for miner address in GHOSTDAG digest
+        // Look for miner address in digest
         for (id, data) in digests {
-            if id == dag_digest::GHOSTDAG_ENGINE_ID {
-                if let Ok(miner) = dag_digest::MinerAddressDigest::decode(&mut &data[..]) {
+            if id == LUMENYX_ENGINE_ID {
+                if let Ok(miner) = MinerAddressDigest::decode(&mut &data[..]) {
                     return Some(AccountId::from(miner.miner));
                 }
             }
@@ -208,6 +208,7 @@ impl FindAuthor<AccountId> for GhostdagAuthorFinder {
         None
     }
 }
+
 /// Handler that issues block rewards for PoW miners
 pub struct BlockRewardHandler;
 impl pallet_authorship::EventHandler<AccountId, BlockNumber> for BlockRewardHandler {
@@ -216,17 +217,8 @@ impl pallet_authorship::EventHandler<AccountId, BlockNumber> for BlockRewardHand
     }
 }
 
-
-
-
-
-
-
-
-
-
 impl pallet_authorship::Config for Runtime {
-    type FindAuthor = GhostdagAuthorFinder;
+    type FindAuthor = PowAuthorFinder;
     type EventHandler = BlockRewardHandler;
 }
 
@@ -239,18 +231,6 @@ impl pallet_halving::Config for Runtime {
     type Currency = Balances;
 }
 
-parameter_types! {
-    pub const MaxNotes: u32 = 1_048_576;
-    pub const TreeDepth: u32 = 20;
-}
-
-impl pallet_privacy::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type Currency = Balances;
-    type MaxNotes = MaxNotes;
-    type TreeDepth = TreeDepth;
-}
-
 // ============================================
 // EVM CONFIGURATION - ETHEREUM COMPATIBILITY
 // ============================================
@@ -258,7 +238,7 @@ impl pallet_privacy::Config for Runtime {
 pub const GAS_PER_SECOND: u64 = 40_000_000;
 
 pub const MAXIMUM_BLOCK_WEIGHT: Weight = Weight::from_parts(
-    WEIGHT_REF_TIME_PER_SECOND * 2,
+    WEIGHT_REF_TIME_PER_SECOND * 12 / 10,
     u64::MAX,
 );
 
@@ -339,7 +319,8 @@ where
 pub struct FixedGasPrice;
 impl FeeCalculator for FixedGasPrice {
     fn min_gas_price() -> (U256, Weight) {
-        (U256::from(1_000_000_000u64), Weight::zero())
+        // Min gas price: 45 planck/gas (as per Master document)
+        (U256::from(45u64), Weight::zero())
     }
 }
 
@@ -373,7 +354,7 @@ impl pallet_evm::Config for Runtime {
     type Runner = pallet_evm::runner::stack::Runner<Self>;
     type OnChargeTransaction = ();
     type OnCreate = ();
-    type FindAuthor = FindAuthorTruncated<GhostdagAuthorFinder>;
+    type FindAuthor = FindAuthorTruncated<PowAuthorFinder>;
     type GasLimitPovSizeRatio = ConstU64<4>;
     type GasLimitStorageGrowthRatio = ConstU64<366>;
     type Timestamp = Timestamp;
@@ -412,7 +393,7 @@ impl pallet_base_fee::Config for Runtime {
 }
 
 // ============================================
-// RUNTIME CONSTRUCTION - NO GRANDPA!
+// RUNTIME CONSTRUCTION
 // ============================================
 
 pub type Address = sp_runtime::MultiAddress<AccountId, ()>;
@@ -430,24 +411,16 @@ pub type SignedExtra = (
 );
 pub type UncheckedExtrinsic = fp_self_contained::UncheckedExtrinsic<Address, RuntimeCall, Signature, SignedExtra>;
 pub type SignedPayload = generic::SignedPayload<RuntimeCall, SignedExtra>;
-pub type Executive = frame_executive::Executive<
-    Runtime,
-    Block,
-    frame_system::ChainContext<Runtime>,
-    Runtime,
-    AllPalletsWithSystem,
->;
+pub type Executive = frame_executive::Executive<Runtime, Block, frame_system::ChainContext<Runtime>, Runtime, AllPalletsWithSystem>;
 
 construct_runtime!(
     pub struct Runtime {
         System: frame_system,
         Timestamp: pallet_timestamp,
-        // NO GRANDPA - GHOSTDAG DAG consensus!
         Balances: pallet_balances,
         TransactionPayment: pallet_transaction_payment,
         Authorship: pallet_authorship,
         Halving: pallet_halving,
-        Privacy: pallet_privacy,
         EVM: pallet_evm,
         Ethereum: pallet_ethereum,
         BaseFee: pallet_base_fee,
@@ -513,73 +486,110 @@ impl fp_self_contained::SelfContainedCall for RuntimeCall {
 }
 
 // ============================================
-// RUNTIME APIS - NO GRANDPA!
+// RUNTIME API IMPLEMENTATIONS
 // ============================================
 
 impl_runtime_apis! {
     impl sp_api::Core<Block> for Runtime {
-        fn version() -> RuntimeVersion { RUNTIME_VERSION }
-        fn execute_block(block: Block) { Executive::execute_block(block) }
+        fn version() -> RuntimeVersion {
+            RUNTIME_VERSION
+        }
+
+        fn execute_block(block: Block) {
+            Executive::execute_block(block);
+        }
+
         fn initialize_block(header: &<Block as BlockT>::Header) -> sp_runtime::ExtrinsicInclusionMode {
             Executive::initialize_block(header)
         }
     }
 
     impl sp_api::Metadata<Block> for Runtime {
-        fn metadata() -> OpaqueMetadata { OpaqueMetadata::new(Runtime::metadata().into()) }
+        fn metadata() -> OpaqueMetadata {
+            OpaqueMetadata::new(Runtime::metadata().into())
+        }
+
         fn metadata_at_version(version: u32) -> Option<OpaqueMetadata> {
             Runtime::metadata_at_version(version)
         }
-        fn metadata_versions() -> sp_std::vec::Vec<u32> { Runtime::metadata_versions() }
+
+        fn metadata_versions() -> Vec<u32> {
+            Runtime::metadata_versions()
+        }
     }
 
     impl sp_block_builder::BlockBuilder<Block> for Runtime {
         fn apply_extrinsic(extrinsic: <Block as BlockT>::Extrinsic) -> ApplyExtrinsicResult {
             Executive::apply_extrinsic(extrinsic)
         }
-        fn finalize_block() -> <Block as BlockT>::Header { Executive::finalize_block() }
+
+        fn finalize_block() -> <Block as BlockT>::Header {
+            Executive::finalize_block()
+        }
+
         fn inherent_extrinsics(data: sp_inherents::InherentData) -> Vec<<Block as BlockT>::Extrinsic> {
             data.create_extrinsics()
         }
-        fn check_inherents(block: Block, data: sp_inherents::InherentData) -> sp_inherents::CheckInherentsResult {
+
+        fn check_inherents(
+            block: Block,
+            data: sp_inherents::InherentData,
+        ) -> sp_inherents::CheckInherentsResult {
             data.check_extrinsics(&block)
         }
     }
 
     impl sp_transaction_pool::runtime_api::TaggedTransactionQueue<Block> for Runtime {
-        fn validate_transaction(source: TransactionSource, tx: <Block as BlockT>::Extrinsic, block_hash: <Block as BlockT>::Hash) -> TransactionValidity {
+        fn validate_transaction(
+            source: TransactionSource,
+            tx: <Block as BlockT>::Extrinsic,
+            block_hash: <Block as BlockT>::Hash,
+        ) -> TransactionValidity {
             Executive::validate_transaction(source, tx, block_hash)
         }
     }
 
     impl sp_offchain::OffchainWorkerApi<Block> for Runtime {
-        fn offchain_worker(header: &<Block as BlockT>::Header) { Executive::offchain_worker(header) }
+        fn offchain_worker(header: &<Block as BlockT>::Header) {
+            Executive::offchain_worker(header)
+        }
     }
+
     impl sp_session::SessionKeys<Block> for Runtime {
         fn generate_session_keys(_seed: Option<Vec<u8>>) -> Vec<u8> {
             Vec::new()
         }
-        fn decode_session_keys(_encoded: Vec<u8>) -> Option<Vec<(Vec<u8>, sp_core::crypto::KeyTypeId)>> {
+
+        fn decode_session_keys(_encoded: Vec<u8>) -> Option<Vec<(Vec<u8>, KeyTypeId)>> {
             None
         }
     }
 
-    // NO GRANDPA API - We don't need it!
-
     impl frame_system_rpc_runtime_api::AccountNonceApi<Block, AccountId, Nonce> for Runtime {
-        fn account_nonce(account: AccountId) -> Nonce { System::account_nonce(account) }
+        fn account_nonce(account: AccountId) -> Nonce {
+            System::account_nonce(account)
+        }
     }
 
     impl pallet_transaction_payment_rpc_runtime_api::TransactionPaymentApi<Block, Balance> for Runtime {
-        fn query_info(uxt: <Block as BlockT>::Extrinsic, len: u32) -> pallet_transaction_payment_rpc_runtime_api::RuntimeDispatchInfo<Balance> {
+        fn query_info(
+            uxt: <Block as BlockT>::Extrinsic,
+            len: u32,
+        ) -> pallet_transaction_payment_rpc_runtime_api::RuntimeDispatchInfo<Balance> {
             TransactionPayment::query_info(uxt, len)
         }
-        fn query_fee_details(uxt: <Block as BlockT>::Extrinsic, len: u32) -> pallet_transaction_payment::FeeDetails<Balance> {
+
+        fn query_fee_details(
+            uxt: <Block as BlockT>::Extrinsic,
+            len: u32,
+        ) -> pallet_transaction_payment::FeeDetails<Balance> {
             TransactionPayment::query_fee_details(uxt, len)
         }
+
         fn query_weight_to_fee(weight: Weight) -> Balance {
             TransactionPayment::weight_to_fee(weight)
         }
+
         fn query_length_to_fee(length: u32) -> Balance {
             TransactionPayment::length_to_fee(length)
         }
@@ -589,18 +599,20 @@ impl_runtime_apis! {
         fn build_state(config: Vec<u8>) -> sp_genesis_builder::Result {
             build_state::<RuntimeGenesisConfig>(config)
         }
+
         fn get_preset(id: &Option<sp_genesis_builder::PresetId>) -> Option<Vec<u8>> {
             get_preset::<RuntimeGenesisConfig>(id, |_| None)
         }
-        fn preset_names() -> Vec<sp_genesis_builder::PresetId> { vec![] }
+
+        fn preset_names() -> Vec<sp_genesis_builder::PresetId> {
+            vec![]
+        }
     }
 
-    // ============================================
-    // FRONTIER EVM RUNTIME APIS
-    // ============================================
-
     impl fp_rpc::EthereumRuntimeRPCApi<Block> for Runtime {
-        fn chain_id() -> u64 { EVM_CHAIN_ID }
+        fn chain_id() -> u64 {
+            EVM_CHAIN_ID
+        }
 
         fn account_basic(address: H160) -> EVMAccount {
             let (account, _) = pallet_evm::Pallet::<Runtime>::account_basic(&address);
@@ -768,10 +780,6 @@ impl_runtime_apis! {
 
         fn gas_limit_multiplier_support() {}
 
-        fn initialize_pending_block(header: &<Block as BlockT>::Header) {
-            Executive::initialize_block(header);
-        }
-
         fn pending_block(
             xts: Vec<<Block as BlockT>::Extrinsic>,
         ) -> (Option<pallet_ethereum::Block>, Option<Vec<TransactionStatus>>) {
@@ -784,6 +792,10 @@ impl_runtime_apis! {
                 pallet_ethereum::CurrentTransactionStatuses::<Runtime>::get(),
             )
         }
+
+        fn initialize_pending_block(header: &<Block as BlockT>::Header) {
+            Executive::initialize_block(header);
+        }
     }
 
     impl fp_rpc::ConvertTransactionRuntimeApi<Block> for Runtime {
@@ -793,6 +805,18 @@ impl_runtime_apis! {
             )
         }
     }
+}
+
+// ============================================
+// OPAQUE TYPES
+// ============================================
+
+pub mod opaque {
+    use super::*;
+    pub use sp_runtime::OpaqueExtrinsic as UncheckedExtrinsic;
+    pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
+    pub type Block = generic::Block<Header, UncheckedExtrinsic>;
+    pub type BlockId = generic::BlockId<Block>;
 }
 
 // ============================================
@@ -820,14 +844,6 @@ impl<B: sp_runtime::traits::Block> fp_rpc::ConvertTransaction<<B as sp_runtime::
         <B as sp_runtime::traits::Block>::Extrinsic::decode(&mut &encoded[..])
             .expect("Encoded extrinsic is always valid")
     }
-}
-
-pub mod opaque {
-    use super::*;
-    pub use sp_runtime::OpaqueExtrinsic as UncheckedExtrinsic;
-    pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
-    pub type Block = generic::Block<Header, UncheckedExtrinsic>;
-    pub type BlockId = generic::BlockId<Block>;
 }
 
 pub const VERSION: RuntimeVersion = RUNTIME_VERSION;

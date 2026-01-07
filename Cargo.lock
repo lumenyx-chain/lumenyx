@@ -4630,7 +4630,6 @@ dependencies = [
  "sc-client-api",
  "sc-consensus",
  "sc-consensus-aura",
- "sc-consensus-ghostdag",
  "sc-executor",
  "sc-keystore",
  "sc-network",
@@ -4699,7 +4698,6 @@ dependencies = [
  "pallet-evm-precompile-sha3fips",
  "pallet-evm-precompile-simple",
  "pallet-halving",
- "pallet-privacy",
  "pallet-session",
  "pallet-timestamp",
  "pallet-transaction-payment",
@@ -5710,21 +5708,6 @@ dependencies = [
  "lumenyx-primitives",
  "parity-scale-codec",
  "scale-info",
- "sp-runtime",
- "sp-std",
-]
-
-[[package]]
-name = "pallet-privacy"
-version = "2.0.0"
-dependencies = [
- "frame-support",
- "frame-system",
- "lumenyx-primitives",
- "parity-scale-codec",
- "scale-info",
- "sp-core",
- "sp-io",
  "sp-runtime",
  "sp-std",
 ]
@@ -7404,58 +7387,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-consensus-ghostdag"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "blake3",
- "futures",
- "hex",
- "log",
- "parity-scale-codec",
- "parking_lot 0.12.5",
- "petgraph",
- "sc-client-api",
- "sc-consensus",
- "sc-consensus-pow",
- "scale-info",
- "sha3",
- "sp-api",
- "sp-blockchain",
- "sp-consensus",
- "sp-consensus-pow",
- "sp-core",
- "sp-runtime",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "sc-consensus-pow"
-version = "0.44.0"
-source = "git+https://github.com/paritytech/polkadot-sdk?branch=stable2409#298f676c91d64f15f38ea7fd78f125c5889ab09c"
-dependencies = [
- "async-trait",
- "futures",
- "futures-timer",
- "log",
- "parity-scale-codec",
- "parking_lot 0.12.5",
- "sc-client-api",
- "sc-consensus",
- "sp-api",
- "sp-block-builder",
- "sp-blockchain",
- "sp-consensus",
- "sp-consensus-pow",
- "sp-core",
- "sp-inherents",
- "sp-runtime",
- "substrate-prometheus-endpoint",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "sc-consensus-slots"
 version = "0.44.0"
 source = "git+https://github.com/paritytech/polkadot-sdk?branch=stable2409#298f676c91d64f15f38ea7fd78f125c5889ab09c"
@@ -8758,17 +8689,6 @@ dependencies = [
  "sp-application-crypto",
  "sp-core",
  "sp-keystore",
- "sp-runtime",
-]
-
-[[package]]
-name = "sp-consensus-pow"
-version = "0.40.0"
-source = "git+https://github.com/paritytech/polkadot-sdk?branch=stable2409#298f676c91d64f15f38ea7fd78f125c5889ab09c"
-dependencies = [
- "parity-scale-codec",
- "sp-api",
- "sp-core",
  "sp-runtime",
 ]
 

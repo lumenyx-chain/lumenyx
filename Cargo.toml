@@ -4,14 +4,11 @@ resolver = "2"
 members = [
     "node",
     "runtime",
-    "pallets/privacy",
     "pallets/halving",
     "primitives",
 ]
 
-exclude = [
-    "tools/zk-cli",
-]
+exclude = []
 
 [workspace.package]
 version = "1.0.0"
@@ -31,7 +28,6 @@ jsonrpsee = { version = "0.22" }
 hex-literal = "0.4"
 
 # Local pallets
-pallet-privacy = { path = "pallets/privacy", default-features = false }
 pallet-halving = { path = "pallets/halving", default-features = false }
 lumenyx-primitives = { path = "primitives", default-features = false }
 
