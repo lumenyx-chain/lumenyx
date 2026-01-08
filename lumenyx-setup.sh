@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v1.1
+# LUMENYX SETUP SCRIPT v1.2
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
@@ -22,6 +22,7 @@ CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.0.0/
 BOOTNODE="/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWEyNNoL5z3WjNZP8c9dBY4zDzgwC8dnwYvVTGwq4zcZq4"
 GITHUB_REPO="https://github.com/lumenyx-chain/lumenyx.git"
 SERVICE_FILE="/etc/systemd/system/lumenyx.service"
+DATA_DIR="$HOME/.local/share/lumenyx-node"
 
 print_banner() {
     echo -e "${CYAN}"
@@ -99,9 +100,18 @@ step_prechecks() {
         fi
     fi
     
+    # Check existing database
+    if [[ -d "$DATA_DIR/chains/lumenyx_mainnet/db" ]]; then
+        print_warning "Existing LUMENYX database found"
+        if ask_yes_no "Delete it and start fresh?"; then
+            rm -rf "$DATA_DIR"
+            print_ok "Database deleted"
+        fi
+    fi
+    
     # Clean stale lock files
-    if [[ -f "$HOME/.local/share/lumenyx-node/chains/lumenyx_mainnet/db/full/LOCK" ]]; then
-        rm -f "$HOME/.local/share/lumenyx-node/chains/lumenyx_mainnet/db/full/LOCK"
+    if [[ -f "$DATA_DIR/chains/lumenyx_mainnet/db/full/LOCK" ]]; then
+        rm -f "$DATA_DIR/chains/lumenyx_mainnet/db/full/LOCK"
         print_ok "Cleaned stale lock file"
     fi
     
@@ -186,6 +196,18 @@ step_install() {
     
     mkdir -p "$LUMENYX_DIR"
     cd "$LUMENYX_DIR"
+    
+    # Check if binary already exists
+    if [[ -f "$BINARY_NAME" ]]; then
+        print_warning "Binary already exists"
+        if ask_yes_no "Re-download?"; then
+            rm -f "$BINARY_NAME"
+        else
+            print_ok "Using existing binary"
+            wait_enter
+            return
+        fi
+    fi
     
     print_info "Downloading lumenyx-node (~65MB)..."
     if curl -L -o "$BINARY_NAME" "$BINARY_URL" --progress-bar; then
@@ -340,7 +362,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=$USER
+User=root
 ExecStart=$FULL_CMD
 Restart=always
 RestartSec=10
