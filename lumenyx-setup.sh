@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v1.2
+# LUMENYX SETUP SCRIPT v1.3
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
@@ -129,7 +129,7 @@ step_welcome() {
     echo "This script will:"
     echo "  1. Check your system"
     echo "  2. Download LUMENYX"
-    echo "  3. Create your wallet"
+    echo "  3. Generate your mining wallet"
     echo "  4. Start the node"
     echo ""
     wait_enter
@@ -237,46 +237,10 @@ step_install() {
     wait_enter
 }
 
-# STEP 4: WALLET
-step_wallet() {
-    echo ""
-    echo -e "${BLUE}═══ STEP 3: WALLET CREATION ═══${NC}"
-    echo ""
-    
-    echo -e "${RED}╔═══════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${RED}║  CRITICAL: Write down the 12-word seed phrase on paper!          ║${NC}"
-    echo -e "${RED}║  If you lose it, your funds are LOST FOREVER.                    ║${NC}"
-    echo -e "${RED}╚═══════════════════════════════════════════════════════════════════╝${NC}"
-    
-    wait_enter
-    
-    WALLET_OUTPUT=$("$LUMENYX_DIR/$BINARY_NAME" key generate --words 12)
-    
-    SEED_PHRASE=$(echo "$WALLET_OUTPUT" | grep "Secret phrase:" | sed 's/.*Secret phrase:[[:space:]]*//')
-    SS58_ADDRESS=$(echo "$WALLET_OUTPUT" | grep "SS58 Address:" | sed 's/.*SS58 Address:[[:space:]]*//')
-    
-    echo ""
-    echo -e "${YELLOW}YOUR SEED PHRASE (12 words):${NC}"
-    echo ""
-    echo -e "${GREEN}  $SEED_PHRASE${NC}"
-    echo ""
-    echo -e "Your LUMENYX address:"
-    echo -e "${GREEN}  $SS58_ADDRESS${NC}"
-    echo ""
-    
-    echo "SS58 Address: $SS58_ADDRESS" > "$LUMENYX_DIR/wallet.txt"
-    echo "SEED PHRASE NOT SAVED - WRITE IT DOWN!" >> "$LUMENYX_DIR/wallet.txt"
-    
-    ask_confirm "Have you written down your seed phrase?"
-    
-    print_ok "Wallet created!"
-    wait_enter
-}
-
-# STEP 5: NODE MODE
+# STEP 4: NODE MODE
 step_mode() {
     echo ""
-    echo -e "${BLUE}═══ STEP 4: NODE MODE ═══${NC}"
+    echo -e "${BLUE}═══ STEP 3: NODE MODE ═══${NC}"
     echo ""
     
     echo "  [1] MINING - Earn LUMENYX (uses CPU)"
@@ -303,6 +267,85 @@ step_mode() {
     
     print_ok "Mode: $NODE_MODE"
     print_ok "Name: $NODE_NAME"
+    wait_enter
+}
+
+# STEP 5: WALLET GENERATION (via node)
+step_wallet() {
+    echo ""
+    echo -e "${BLUE}═══ STEP 4: WALLET GENERATION ═══${NC}"
+    echo ""
+    
+    # Check if wallet already exists
+    if [[ -f "$DATA_DIR/miner-key" ]]; then
+        print_ok "Wallet already exists"
+        print_info "Your mining address is in the node logs when it starts"
+        wait_enter
+        return
+    fi
+    
+    echo -e "${RED}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║  CRITICAL: The node will now generate your mining wallet.        ║${NC}"
+    echo -e "${RED}║  Write down the 12-word seed phrase on paper!                    ║${NC}"
+    echo -e "${RED}║  If you lose it, your funds are LOST FOREVER.                    ║${NC}"
+    echo -e "${RED}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    print_info "Starting node to generate wallet..."
+    echo ""
+    
+    # Start node briefly to generate wallet, capture output
+    LOG_FILE="/tmp/lumenyx-wallet-$$.log"
+    
+    if [[ "$NODE_MODE" == "mining" ]]; then
+        timeout 10 "$LUMENYX_DIR/$BINARY_NAME" --chain mainnet --name "$NODE_NAME" --validator 2>&1 | tee "$LOG_FILE" || true
+    else
+        timeout 10 "$LUMENYX_DIR/$BINARY_NAME" --chain mainnet --name "$NODE_NAME" 2>&1 | tee "$LOG_FILE" || true
+    fi
+    
+    # Kill any remaining process
+    pkill -9 lumenyx-node 2>/dev/null || true
+    sleep 2
+    
+    # Extract wallet info from log
+    SEED_PHRASE=$(grep "Seed phrase:" "$LOG_FILE" | sed 's/.*Seed phrase: //' | head -1)
+    WALLET_ADDRESS=$(grep "Address:" "$LOG_FILE" | grep -v "public" | sed 's/.*Address: //' | head -1)
+    
+    if [[ -z "$SEED_PHRASE" ]]; then
+        # Wallet might already exist, get address from Mining rewards line
+        WALLET_ADDRESS=$(grep "Mining rewards to:" "$LOG_FILE" | sed 's/.*Mining rewards to: //' | head -1)
+        if [[ -n "$WALLET_ADDRESS" ]]; then
+            echo ""
+            print_ok "Wallet already generated"
+            echo ""
+            echo -e "Your LUMENYX mining address:"
+            echo -e "${GREEN}  $WALLET_ADDRESS${NC}"
+            echo ""
+        fi
+    else
+        echo ""
+        echo -e "${CYAN}═══════════════════════════════════════════════════════════════════${NC}"
+        echo ""
+        echo -e "${YELLOW}YOUR SEED PHRASE (12 words):${NC}"
+        echo ""
+        echo -e "${GREEN}  $SEED_PHRASE${NC}"
+        echo ""
+        echo -e "Your LUMENYX mining address:"
+        echo -e "${GREEN}  $WALLET_ADDRESS${NC}"
+        echo ""
+        echo -e "${CYAN}═══════════════════════════════════════════════════════════════════${NC}"
+        echo ""
+        
+        # Save address to file (not seed phrase for security)
+        echo "LUMENYX Mining Wallet" > "$LUMENYX_DIR/wallet.txt"
+        echo "Address: $WALLET_ADDRESS" >> "$LUMENYX_DIR/wallet.txt"
+        echo "SEED PHRASE NOT SAVED - YOU SHOULD HAVE WRITTEN IT DOWN!" >> "$LUMENYX_DIR/wallet.txt"
+    fi
+    
+    rm -f "$LOG_FILE"
+    
+    ask_confirm "Have you written down your seed phrase?"
+    
+    print_ok "Wallet ready!"
     wait_enter
 }
 
@@ -407,8 +450,8 @@ main() {
     step_prechecks
     step_check_system
     step_install
-    step_wallet
     step_mode
+    step_wallet
     step_create_scripts
     step_start
 }
