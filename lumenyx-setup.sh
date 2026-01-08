@@ -105,6 +105,7 @@ step_prechecks() {
         print_warning "Existing LUMENYX database found"
         if ask_yes_no "Delete it and start fresh?"; then
             rm -rf "$DATA_DIR"
+            rm -rf "$LUMENYX_DIR"
             print_ok "Database deleted"
         fi
     fi
