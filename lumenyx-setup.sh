@@ -15,7 +15,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Configuration
-LUMENYX_DIR="$HOME/lumenyx"
+LUMENYX_DIR="$HOME/.lumenyx"
 BINARY_NAME="lumenyx-node"
 BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.0.0/lumenyx-node"
 CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.0.0/sha256sum.txt"
