@@ -1,1 +1,1 @@
-06c9b63c3829f3b276d52e865e9109d6dfb01ec4bd430d540d86a47a8ff9b381  target/release/lumenyx-node
+a99a1657acdb80761c0cce41fe8b406d94adb423893a75783caf9c2d657e1009  target/release/lumenyx-node

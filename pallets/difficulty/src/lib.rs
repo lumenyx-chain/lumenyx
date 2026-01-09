@@ -137,7 +137,12 @@ pub mod pallet {
             let now_ms: u64 = pallet_timestamp::Pallet::<T>::get().saturated_into::<u64>();
 
             // 2) Calculate effective timestamp with clamp (prevents manipulation)
-            let prev_eff_ms = LastEffectiveTimeMs::<T>::get();
+            let mut prev_eff_ms = LastEffectiveTimeMs::<T>::get();
+            // First block: initialize with real timestamp
+            if prev_eff_ms == 0 {
+                prev_eff_ms = now_ms.saturating_sub(TARGET_BLOCK_TIME_MS);
+                LastEffectiveTimeMs::<T>::put(prev_eff_ms);
+            }
             
             let mut solve_ms = now_ms.saturating_sub(prev_eff_ms);
             
@@ -158,7 +163,7 @@ pub mod pallet {
                 None => {
                     let a = AnchorInfo {
                         anchor_height: block_number,
-                        anchor_parent_time_ms: prev_eff_ms,
+                        anchor_parent_time_ms: now_ms.saturating_sub(TARGET_BLOCK_TIME_MS),
                         anchor_difficulty: CurrentDifficulty::<T>::get(),
                     };
                     Anchor::<T>::put(&a);
