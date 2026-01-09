@@ -1,21 +1,18 @@
 [workspace]
 resolver = "2"
-
 members = [
     "node",
     "runtime",
     "pallets/halving",
+    "pallets/difficulty",
     "primitives",
 ]
-
 exclude = []
-
 [workspace.package]
 version = "1.0.0"
 edition = "2021"
 authors = ["Anonymous"]
 license = "MIT"
-
 [workspace.dependencies]
 codec = { package = "parity-scale-codec", version = "3.6", default-features = false }
 scale-info = { version = "2.10", default-features = false }
@@ -26,11 +23,10 @@ clap = { version = "4.4" }
 futures = "0.3"
 jsonrpsee = { version = "0.22" }
 hex-literal = "0.4"
-
 # Local pallets
 pallet-halving = { path = "pallets/halving", default-features = false }
+pallet-difficulty = { path = "pallets/difficulty", default-features = false }
 lumenyx-primitives = { path = "primitives", default-features = false }
-
 [profile.release]
 panic = "unwind"
 opt-level = 3

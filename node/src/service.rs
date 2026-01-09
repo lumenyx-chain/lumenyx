@@ -1,16 +1,16 @@
-//! LUMENYX Service Configuration - PoW LongestChain
+//! LUMENYX Service Configuration - PoW with Dynamic Difficulty
 //!
-//! Simple PoW consensus with LongestChain fork choice.
+//! PoW consensus with on-chain difficulty adjustment.
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use std::fs;
-use sp_core::{sr25519, Pair, crypto::Ss58Codec, H256};
+use sp_core::{sr25519, Pair, crypto::Ss58Codec, H256, storage::StorageKey};
 use sp_runtime::generic::DigestItem;
-use codec::Encode;
+use codec::{Encode, Decode};
 
 use futures::StreamExt;
 use lumenyx_runtime::{self, opaque::Block, RuntimeApi};
-use sc_client_api::{BlockBackend, BlockchainEvents, AuxStore, HeaderBackend};
+use sc_client_api::{BlockBackend, BlockchainEvents, AuxStore, HeaderBackend, StorageProvider};
 use sc_consensus::{BlockImportParams, import_queue::Verifier, BlockImport};
 use sc_executor::WasmExecutor;
 use sc_service::{
@@ -44,7 +44,9 @@ pub struct FrontierPartialComponents {
 }
 
 const TARGET_BLOCK_TIME_MS: u64 = 2500;
-const INITIAL_DIFFICULTY: u64 = 100;
+
+// Fallback difficulty if we can't read from runtime
+const FALLBACK_DIFFICULTY: u128 = 1_000_000;
 
 /// LUMENYX Engine ID for digests
 const LUMENYX_ENGINE_ID: sp_runtime::ConsensusEngineId = *b"LMNX";
@@ -53,6 +55,46 @@ const LUMENYX_ENGINE_ID: sp_runtime::ConsensusEngineId = *b"LMNX";
 #[derive(Clone, codec::Encode, codec::Decode)]
 struct MinerAddressDigest {
     miner: [u8; 32],
+}
+
+/// Generate storage key for Difficulty::CurrentDifficulty
+fn difficulty_storage_key() -> StorageKey {
+    // twox_128("Difficulty") ++ twox_128("CurrentDifficulty")
+    let mut key = sp_core::twox_128(b"Difficulty").to_vec();
+    key.extend(sp_core::twox_128(b"CurrentDifficulty"));
+    StorageKey(key)
+}
+
+/// Read current difficulty from runtime storage
+fn read_difficulty_from_storage<C>(client: &C, at: H256) -> u128
+where
+    C: StorageProvider<Block, FullBackend>,
+{
+    let key = difficulty_storage_key();
+    
+    match client.storage(at, &key) {
+        Ok(Some(data)) => {
+            // Decode u128 from storage
+            match u128::decode(&mut &data.0[..]) {
+                Ok(diff) => {
+                    log::debug!("📊 Read difficulty from storage: {}", diff);
+                    diff
+                }
+                Err(e) => {
+                    log::warn!("Failed to decode difficulty: {:?}, using fallback", e);
+                    FALLBACK_DIFFICULTY
+                }
+            }
+        }
+        Ok(None) => {
+            log::debug!("No difficulty in storage yet, using fallback");
+            FALLBACK_DIFFICULTY
+        }
+        Err(e) => {
+            log::warn!("Failed to read difficulty storage: {:?}, using fallback", e);
+            FALLBACK_DIFFICULTY
+        }
+    }
 }
 
 /// Load or generate miner keypair
@@ -97,16 +139,29 @@ fn compute_pow_hash(data: &[u8], nonce: &[u8; 32]) -> H256 {
     H256::from_slice(&hasher.finalize().as_bytes()[..32])
 }
 
-fn difficulty_to_target(difficulty: u64) -> H256 {
+fn difficulty_to_target(difficulty: u128) -> H256 {
     if difficulty == 0 { return H256::repeat_byte(0xff); }
-    let mut target = [0u8; 32];
-    let divisor = difficulty as u128;
-    let mut remainder = 0u128;
-    for i in 0..32 {
-        let current = (remainder << 8) | 0xff_u128;
-        target[i] = (current / divisor) as u8;
-        remainder = current % divisor;
+    
+    // target = MAX_HASH / difficulty
+    // For simplicity: we create a target where leading bytes are smaller for higher difficulty
+    let mut target = [0xffu8; 32];
+    
+    // Simple approach: divide 256-bit max by difficulty
+    // We use a simplified version that works well for our range
+    let scale = (u128::MAX / difficulty) as u64;
+    let leading_zeros = scale.leading_zeros() / 8;
+    
+    for i in 0..(leading_zeros as usize).min(32) {
+        target[i] = 0;
     }
+    
+    if leading_zeros < 32 {
+        let idx = leading_zeros as usize;
+        if idx < 32 {
+            target[idx] = (0xff >> (scale.leading_zeros() % 8)) as u8;
+        }
+    }
+    
     H256::from_slice(&target)
 }
 
@@ -194,7 +249,7 @@ pub fn new_partial(
     );
 
     let verifier = SimpleVerifier;
-    
+
     let import_queue = sc_consensus::BasicQueue::new(
         verifier,
         Box::new(client.clone()),
@@ -381,7 +436,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     })?;
 
     // ============================================
-    // POW MINING
+    // POW MINING WITH DYNAMIC DIFFICULTY
     // ============================================
     if role.is_authority() || force_authoring {
         use sp_consensus::{Environment, Proposer};
@@ -391,7 +446,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         let miner_pair = get_or_create_miner_key(&miner_base_path);
         let miner_address: [u8; 32] = miner_pair.public().0;
         log::info!("💰 Mining rewards to: {}", miner_pair.public().to_ss58check());
-        log::info!("⛏️  Starting PoW miner...");
+        log::info!("⛏️  Starting PoW miner with dynamic difficulty...");
 
         let mut proposer_factory = ProposerFactory::new(
             task_manager.spawn_handle(),
@@ -411,11 +466,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             "pow-miner",
             Some("mining"),
             async move {
-                let mut interval = tokio::time::interval(Duration::from_millis(TARGET_BLOCK_TIME_MS));
-                let difficulty = INITIAL_DIFFICULTY;
-                let target = difficulty_to_target(difficulty);
+                let mut interval = tokio::time::interval(Duration::from_millis(100)); // Check more frequently
                 let mut consecutive_propose_failures: u32 = 0;
                 const MAX_FAILURES_BEFORE_POOL_CLEAR: u32 = 3;
+                let mut last_difficulty: u128 = FALLBACK_DIFFICULTY;
+                let mut blocks_since_difficulty_log: u32 = 0;
 
                 loop {
                     if mining_sync_service.is_major_syncing() {
@@ -436,6 +491,23 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
                     let parent_hash = best_header.hash();
                     let parent_number = *best_header.number();
+
+                    // Read difficulty from runtime storage
+                    let difficulty = read_difficulty_from_storage(&*mining_client, parent_hash);
+                    let target = difficulty_to_target(difficulty);
+                    
+                    // Log difficulty changes
+                    if difficulty != last_difficulty {
+                        log::info!("⚡ Difficulty changed: {} -> {}", last_difficulty, difficulty);
+                        last_difficulty = difficulty;
+                    }
+                    
+                    // Log difficulty periodically (every 100 blocks)
+                    blocks_since_difficulty_log += 1;
+                    if blocks_since_difficulty_log >= 100 {
+                        log::info!("📊 Current difficulty: {}", difficulty);
+                        blocks_since_difficulty_log = 0;
+                    }
 
                     let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
                     let inherent_data = match timestamp.create_inherent_data().await {
@@ -494,7 +566,10 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     nonce[0..8].copy_from_slice(&seed.to_le_bytes());
 
                     let mut found = false;
-                    for _ in 0..1_000_000u64 {
+                    // More iterations for higher difficulty
+                    let max_iterations: u64 = 50_000_000;
+                    
+                    for _ in 0..max_iterations {
                         for i in 0..32 {
                             if nonce[i] == 255 { nonce[i] = 0; }
                             else { nonce[i] += 1; break; }
@@ -513,9 +588,10 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                             match block_import.import_block(import_params).await {
                                 Ok(_) => {
                                     log::info!(
-                                        "✅ Block #{} mined! hash={:?}",
+                                        "✅ Block #{} mined! hash={:?} difficulty={}",
                                         parent_number + 1,
-                                        header_hash
+                                        header_hash,
+                                        difficulty
                                     );
                                     consecutive_propose_failures = 0;
                                 }
@@ -530,13 +606,14 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     }
 
                     if !found {
-                        log::debug!("⏳ No valid nonce found for block #{}", parent_number + 1);
+                        log::debug!("⏳ No valid nonce found for block #{} (difficulty: {})", 
+                            parent_number + 1, difficulty);
                     }
                 }
             },
         );
 
-        log::info!("🚀 PoW miner started!");
+        log::info!("🚀 PoW miner started with dynamic difficulty!");
     } else {
         log::info!("📡 Sync-only mode (not mining)");
     }

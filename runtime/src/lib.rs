@@ -232,6 +232,15 @@ impl pallet_halving::Config for Runtime {
 }
 
 // ============================================
+// DIFFICULTY ADJUSTMENT PALLET
+// ============================================
+
+impl pallet_difficulty::Config for Runtime {
+    type TimeProvider = Timestamp;
+    type RuntimeEvent = RuntimeEvent;
+}
+
+// ============================================
 // EVM CONFIGURATION - ETHEREUM COMPATIBILITY
 // ============================================
 
@@ -421,6 +430,7 @@ construct_runtime!(
         TransactionPayment: pallet_transaction_payment,
         Authorship: pallet_authorship,
         Halving: pallet_halving,
+        Difficulty: pallet_difficulty,
         EVM: pallet_evm,
         Ethereum: pallet_ethereum,
         BaseFee: pallet_base_fee,
