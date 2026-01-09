@@ -356,9 +356,9 @@ step_create_scripts() {
     echo ""
     
     if [[ "$NODE_MODE" == "mining" ]]; then
-        FULL_CMD="$LUMENYX_DIR/$BINARY_NAME --chain mainnet --name \"$NODE_NAME\" --validator --rpc-cors all --rpc-external --rpc-methods Safe --bootnodes $BOOTNODE"
+        FULL_CMD="$LUMENYX_DIR/$BINARY_NAME --chain mainnet --name \"$NODE_NAME\" --validator --rpc-cors all --unsafe-rpc-external --rpc-methods Safe --bootnodes $BOOTNODE"
     else
-        FULL_CMD="$LUMENYX_DIR/$BINARY_NAME --chain mainnet --name \"$NODE_NAME\" --rpc-cors all --rpc-external --rpc-methods Safe --bootnodes $BOOTNODE"
+        FULL_CMD="$LUMENYX_DIR/$BINARY_NAME --chain mainnet --name \"$NODE_NAME\" --rpc-cors all --unsafe-rpc-external --rpc-methods Safe --bootnodes $BOOTNODE"
     fi
     
     # Create start script
