@@ -1,17 +1,18 @@
-//! # LUMENYX Difficulty Pallet
+//! # LUMENYX Difficulty Pallet - ASERT Algorithm
 //!
-//! Dynamic PoW difficulty adjustment like Bitcoin.
-//! 
-//! ## How it works:
-//! - Stores current difficulty on-chain (all nodes see same value)
-//! - Every ADJUSTMENT_INTERVAL blocks, recalculates difficulty
-//! - Based on actual vs target time for last interval
-//! - Deterministic: given same state, all nodes calculate same difficulty
+//! Dynamic PoW difficulty adjustment using ASERT (aserti3-2d).
+//! Based on Bitcoin Cash's battle-tested implementation.
 //!
-//! ## Parameters:
-//! - Target block time: 2.5 seconds
-//! - Adjustment interval: 60 blocks (~2.5 minutes)
-//! - Max adjustment: ±25% per interval
+//! ## How ASERT works:
+//! - Adjusts difficulty EVERY BLOCK (not every N blocks)
+//! - Uses exponential formula: next_diff = anchor_diff * 2^((ideal_time - real_time) / halflife)
+//! - Anchor = reference point (block #1) for all calculations
+//! - Deterministic: all nodes calculate identical difficulty
+//!
+//! ## Parameters for LUMENYX:
+//! - Target block time: 2.5 seconds (2500ms)
+//! - Halflife: 720 seconds (12 minutes)
+//! - Initial difficulty: 25,000,000
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -20,185 +21,325 @@ pub use pallet::*;
 #[frame_support::pallet]
 pub mod pallet {
     use frame_support::pallet_prelude::*;
-    use frame_support::traits::Time;
     use frame_system::pallet_prelude::*;
+    use sp_runtime::traits::{SaturatedConversion, Saturating};
+
+    // ============================================
+    // ASERT CONSTANTS
+    // ============================================
+
+    /// Fixed-point radix = 2^16 (from aserti3-2d specification)
+    const RADIX: i128 = 1i128 << 16;
 
     /// Target block time in milliseconds (2.5 seconds)
     pub const TARGET_BLOCK_TIME_MS: u64 = 2_500;
-    
-    /// Number of blocks between difficulty adjustments
-    /// 60 blocks = ~2.5 minutes at target rate
-    pub const ADJUSTMENT_INTERVAL: u32 = 60;
-    
-    /// Initial difficulty - calibrated for ~1-3 miners
-    /// Higher = harder to mine
-    pub const INITIAL_DIFFICULTY: u128 = 1_000_000;
-    
+
+    /// Halflife in milliseconds (720 seconds = 12 minutes)
+    /// This controls how fast difficulty responds to hashrate changes
+    pub const HALF_LIFE_MS: u64 = 720_000;
+
+    /// Initial difficulty - calibrated for ~2.5 sec/block with 1 miner
+    pub const INITIAL_DIFFICULTY: u128 = 25_000_000;
+
     /// Minimum difficulty (prevents too-easy mining)
     pub const MIN_DIFFICULTY: u128 = 10_000;
-    
+
     /// Maximum difficulty (prevents stuck chain)
     pub const MAX_DIFFICULTY: u128 = 1_000_000_000_000_000;
-    
-    /// Maximum adjustment factor (25% up)
-    pub const MAX_ADJUSTMENT_UP: u128 = 125;
-    
-    /// Maximum adjustment factor (25% down)  
-    pub const MAX_ADJUSTMENT_DOWN: u128 = 75;
-    
-    /// Adjustment denominator (100 = percentage base)
-    pub const ADJUSTMENT_BASE: u128 = 100;
+
+    /// Minimum solve time clamp (prevents timestamp manipulation)
+    pub const MIN_SOLVE_TIME_MS: u64 = 1;
+
+    /// Maximum solve time clamp (10x target, prevents timestamp manipulation)
+    pub const MAX_SOLVE_TIME_MS: u64 = 25_000;
+
+    // ============================================
+    // ANCHOR STRUCTURE
+    // ============================================
+
+    /// Anchor info for ASERT calculations
+    /// The anchor is set at block #1 and used as reference for all future calculations
+    #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+    pub struct AnchorInfo<BlockNumber> {
+        /// Height of the anchor block
+        pub anchor_height: BlockNumber,
+        /// Timestamp (ms) of the parent of the anchor block
+        pub anchor_parent_time_ms: u64,
+        /// Difficulty at the anchor block
+        pub anchor_difficulty: u128,
+    }
+
+    // ============================================
+    // PALLET CONFIG
+    // ============================================
 
     #[pallet::config]
-    pub trait Config: frame_system::Config {
+    pub trait Config: frame_system::Config + pallet_timestamp::Config {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-        
-        /// Time provider for getting current timestamp
-        type TimeProvider: frame_support::traits::Time;
     }
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
 
-    /// Current mining difficulty
+    // ============================================
+    // STORAGE
+    // ============================================
+
+    /// Current mining difficulty (read by miner for next block)
     #[pallet::storage]
     #[pallet::getter(fn current_difficulty)]
-    pub type CurrentDifficulty<T: Config> = StorageValue<_, u128, ValueQuery, InitialDifficulty>;
+    pub type CurrentDifficulty<T: Config> = StorageValue<_, u128, ValueQuery, InitialDifficultyValue>;
 
     #[pallet::type_value]
-    pub fn InitialDifficulty() -> u128 {
+    pub fn InitialDifficultyValue() -> u128 {
         INITIAL_DIFFICULTY
     }
 
-    /// Block number of last difficulty adjustment
+    /// Last effective timestamp (ms) - used for deterministic time series
     #[pallet::storage]
-    #[pallet::getter(fn last_adjustment_block)]
-    pub type LastAdjustmentBlock<T: Config> = StorageValue<_, BlockNumberFor<T>, ValueQuery>;
+    #[pallet::getter(fn last_effective_time_ms)]
+    pub type LastEffectiveTimeMs<T: Config> = StorageValue<_, u64, ValueQuery>;
 
-    /// Timestamp at start of current interval (in ms)
+    /// ASERT Anchor - set at block #1, used for all calculations
     #[pallet::storage]
-    #[pallet::getter(fn interval_start_time)]
-    pub type IntervalStartTime<T: Config> = StorageValue<_, u64, ValueQuery>;
+    #[pallet::getter(fn anchor)]
+    pub type Anchor<T: Config> = StorageValue<_, AnchorInfo<BlockNumberFor<T>>, OptionQuery>;
+
+    // ============================================
+    // EVENTS
+    // ============================================
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
-        /// Difficulty was adjusted
-        DifficultyAdjusted {
+        /// Difficulty updated for next block
+        DifficultyUpdated {
+            block_number: BlockNumberFor<T>,
             old_difficulty: u128,
             new_difficulty: u128,
-            block_number: BlockNumberFor<T>,
-            actual_time_ms: u64,
-            target_time_ms: u64,
+        },
+        /// Anchor was set (happens once at block #1)
+        AnchorSet {
+            height: BlockNumberFor<T>,
+            parent_time_ms: u64,
+            difficulty: u128,
         },
     }
 
+    // ============================================
+    // HOOKS - CALLED EVERY BLOCK
+    // ============================================
+
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
-        fn on_initialize(block_number: BlockNumberFor<T>) -> Weight {
-            let current_time: u64 = T::TimeProvider::now().try_into().unwrap_or(0);
+        fn on_finalize(block_number: BlockNumberFor<T>) {
+            // 1) Get current timestamp from pallet_timestamp (in ms)
+            let now_ms: u64 = pallet_timestamp::Pallet::<T>::get().saturated_into::<u64>();
+
+            // 2) Calculate effective timestamp with clamp (prevents manipulation)
+            let prev_eff_ms = LastEffectiveTimeMs::<T>::get();
             
-            // Initialize on first block
-            if block_number == 1u32.into() {
-                IntervalStartTime::<T>::put(current_time);
-                LastAdjustmentBlock::<T>::put(block_number);
-                return Weight::from_parts(10_000, 0);
+            let mut solve_ms = now_ms.saturating_sub(prev_eff_ms);
+            
+            // Clamp solve time to prevent timestamp manipulation
+            if solve_ms < MIN_SOLVE_TIME_MS {
+                solve_ms = MIN_SOLVE_TIME_MS;
+            }
+            if solve_ms > MAX_SOLVE_TIME_MS {
+                solve_ms = MAX_SOLVE_TIME_MS;
             }
 
-            // Check if we need to adjust difficulty
-            let last_adj_block = Self::last_adjustment_block();
-            let block_num_u32: u32 = block_number.try_into().unwrap_or(0);
-            let last_adj_u32: u32 = last_adj_block.try_into().unwrap_or(0);
-            
-            let blocks_since_adjustment = block_num_u32.saturating_sub(last_adj_u32);
-            
-            if blocks_since_adjustment >= ADJUSTMENT_INTERVAL {
-                Self::adjust_difficulty(block_number, current_time);
-            }
+            let eff_now_ms = prev_eff_ms.saturating_add(solve_ms);
+            LastEffectiveTimeMs::<T>::put(eff_now_ms);
 
-            Weight::from_parts(15_000, 0)
+            // 3) Set anchor if not exists (first block)
+            let anchor = match Anchor::<T>::get() {
+                Some(a) => a,
+                None => {
+                    let a = AnchorInfo {
+                        anchor_height: block_number,
+                        anchor_parent_time_ms: prev_eff_ms,
+                        anchor_difficulty: CurrentDifficulty::<T>::get(),
+                    };
+                    Anchor::<T>::put(&a);
+                    Self::deposit_event(Event::AnchorSet {
+                        height: block_number,
+                        parent_time_ms: prev_eff_ms,
+                        difficulty: a.anchor_difficulty,
+                    });
+                    log::info!(
+                        "🎯 ASERT Anchor set at block {:?}: difficulty={}, parent_time={}ms",
+                        block_number,
+                        a.anchor_difficulty,
+                        prev_eff_ms
+                    );
+                    a
+                }
+            };
+
+            // 4) Calculate next difficulty using ASERT
+            let old_difficulty = CurrentDifficulty::<T>::get();
+            let new_difficulty = Self::calculate_asert_difficulty(&anchor, block_number, eff_now_ms);
+
+            // 5) Update storage
+            CurrentDifficulty::<T>::put(new_difficulty);
+
+            // 6) Emit event and log
+            Self::deposit_event(Event::DifficultyUpdated {
+                block_number,
+                old_difficulty,
+                new_difficulty,
+            });
+
+            // Log significant changes (more than 1%)
+            let change_percent = if new_difficulty > old_difficulty {
+                ((new_difficulty - old_difficulty) * 100) / old_difficulty
+            } else {
+                ((old_difficulty - new_difficulty) * 100) / old_difficulty
+            };
+
+            if change_percent > 0 {
+                log::info!(
+                    "⚡ Difficulty: {} -> {} ({}% change)",
+                    old_difficulty,
+                    new_difficulty,
+                    if new_difficulty > old_difficulty { "+" } else { "-" }
+                );
+            }
         }
     }
 
+    // ============================================
+    // ASERT IMPLEMENTATION
+    // ============================================
+
     impl<T: Config> Pallet<T> {
-        /// Adjust difficulty based on actual vs target time
-        fn adjust_difficulty(block_number: BlockNumberFor<T>, current_time: u64) {
-            let interval_start = Self::interval_start_time();
-            let old_difficulty = Self::current_difficulty();
-            
-            // Calculate actual time for this interval
-            let actual_time_ms = current_time.saturating_sub(interval_start);
-            
-            // Target time for ADJUSTMENT_INTERVAL blocks
-            let target_time_ms = (ADJUSTMENT_INTERVAL as u64) * TARGET_BLOCK_TIME_MS;
-            
-            // Prevent division by zero
-            if actual_time_ms == 0 {
-                return;
+        /// Calculate next difficulty using ASERT formula:
+        /// next_difficulty = anchor_difficulty * 2^((ideal_time - real_time) / halflife)
+        ///
+        /// Where:
+        /// - ideal_time = TARGET_BLOCK_TIME * (height_delta + 1)
+        /// - real_time = current_time - anchor_parent_time
+        fn calculate_asert_difficulty(
+            anchor: &AnchorInfo<BlockNumberFor<T>>,
+            eval_height: BlockNumberFor<T>,
+            eval_time_ms: u64,
+        ) -> u128 {
+            // Safety check: halflife must not be zero
+            if HALF_LIFE_MS == 0 {
+                return Self::clamp_difficulty(anchor.anchor_difficulty);
             }
 
-            // Calculate adjustment ratio
-            // If actual < target (too fast), increase difficulty
-            // If actual > target (too slow), decrease difficulty
-            //
-            // new_diff = old_diff * target_time / actual_time
-            //
-            // But we clamp to ±25% per adjustment
+            // Calculate height delta (how many blocks since anchor)
+            let height_delta_u64: u64 = eval_height
+                .saturating_sub(anchor.anchor_height)
+                .saturated_into::<u64>();
+
+            // ideal_time = how much time SHOULD have passed for this many blocks
+            // We use (height_delta + 1) because we're calculating for the NEXT block
+            let ideal_time_ms: i128 = (TARGET_BLOCK_TIME_MS as i128)
+                .saturating_mul((height_delta_u64.saturating_add(1)) as i128);
+
+            // real_time = how much time ACTUALLY passed since anchor
+            let real_time_ms: i128 =
+                (eval_time_ms as i128).saturating_sub(anchor.anchor_parent_time_ms as i128);
+
+            // exponent = (ideal - real) / halflife
+            // If blocks are too fast: ideal > real → positive exponent → difficulty increases
+            // If blocks are too slow: ideal < real → negative exponent → difficulty decreases
+            let ideal_minus_real: i128 = ideal_time_ms.saturating_sub(real_time_ms);
             
-            let new_difficulty = if actual_time_ms < target_time_ms {
-                // Too fast - increase difficulty
-                let ratio_x100 = (target_time_ms as u128)
-                    .saturating_mul(100)
-                    .checked_div(actual_time_ms as u128)
-                    .unwrap_or(100);
-                
-                // Clamp to max 125%
-                let clamped_ratio = ratio_x100.min(MAX_ADJUSTMENT_UP);
-                
-                old_difficulty
-                    .saturating_mul(clamped_ratio)
-                    .checked_div(ADJUSTMENT_BASE)
-                    .unwrap_or(old_difficulty)
-            } else {
-                // Too slow - decrease difficulty
-                let ratio_x100 = (target_time_ms as u128)
-                    .saturating_mul(100)
-                    .checked_div(actual_time_ms as u128)
-                    .unwrap_or(100);
-                
-                // Clamp to min 75%
-                let clamped_ratio = ratio_x100.max(MAX_ADJUSTMENT_DOWN);
-                
-                old_difficulty
-                    .saturating_mul(clamped_ratio)
-                    .checked_div(ADJUSTMENT_BASE)
-                    .unwrap_or(old_difficulty)
+            // Convert to fixed-point for precision
+            let exponent_fixed: i128 = ideal_minus_real
+                .saturating_mul(RADIX)
+                / (HALF_LIFE_MS as i128);
+
+            // Calculate 2^exponent using aserti3-2d approximation
+            let (num_shifts, factor_q16) = Self::approx_pow2_fixed(exponent_fixed);
+
+            // next = anchor_difficulty * factor
+            let mut next: u128 = match anchor.anchor_difficulty.checked_mul(factor_q16) {
+                Some(v) => v,
+                None => return MAX_DIFFICULTY, // Overflow protection
             };
 
-            // Apply min/max bounds
-            let final_difficulty = new_difficulty.max(MIN_DIFFICULTY).min(MAX_DIFFICULTY);
+            // Apply the integer part of the exponent (2^num_shifts)
+            if num_shifts < 0 {
+                // Difficulty decreasing (shift right)
+                let s = (-num_shifts) as u32;
+                if s >= 128 {
+                    next = 0;
+                } else {
+                    next >>= s;
+                }
+            } else if num_shifts > 0 {
+                // Difficulty increasing (shift left)
+                let s = num_shifts as u32;
+                if s >= 128 {
+                    return MAX_DIFFICULTY;
+                }
+                next = match next.checked_shl(s) {
+                    Some(v) => v,
+                    None => return MAX_DIFFICULTY,
+                };
+            }
 
-            // Update storage
-            CurrentDifficulty::<T>::put(final_difficulty);
-            LastAdjustmentBlock::<T>::put(block_number);
-            IntervalStartTime::<T>::put(current_time);
+            // Divide by RADIX to convert from Q16 to integer
+            next >>= 16;
 
-            // Emit event
-            Self::deposit_event(Event::DifficultyAdjusted {
-                old_difficulty,
-                new_difficulty: final_difficulty,
-                block_number,
-                actual_time_ms,
-                target_time_ms,
-            });
+            // Safety: if result is 0, use minimum
+            if next == 0 {
+                return MIN_DIFFICULTY;
+            }
 
-            log::info!(
-                "⚡ Difficulty adjusted: {} -> {} (actual: {}ms, target: {}ms)",
-                old_difficulty,
-                final_difficulty,
-                actual_time_ms,
-                target_time_ms
-            );
+            Self::clamp_difficulty(next)
+        }
+
+        /// Approximate 2^(exponent_fixed / 2^16) using cubic polynomial
+        /// This is the aserti3-2d algorithm from Bitcoin Cash
+        ///
+        /// Returns:
+        /// - num_shifts: integer part of exponent (for 2^n via bit shift)
+        /// - factor_q16: fractional part as Q16 fixed-point [65536..131072)
+        fn approx_pow2_fixed(exponent_fixed: i128) -> (i128, u128) {
+            // Split into integer and fractional parts
+            // num_shifts = floor(exponent / 2^16) using arithmetic shift
+            let num_shifts: i128 = exponent_fixed >> 16;
+
+            // frac = exponent - num_shifts * RADIX, result in [0, 65535]
+            let frac: i128 = exponent_fixed.saturating_sub(num_shifts.saturating_mul(RADIX));
+            let x: u128 = frac as u128;
+
+            // Cubic polynomial approximation of 2^x for x in [0, 1)
+            // Constants from aserti3-2d specification:
+            // factor = ((A*x + B*x^2 + C*x^3 + 2^47) >> 48) + 65536
+            let x2 = x.saturating_mul(x);
+            let x3 = x2.saturating_mul(x);
+
+            // Magic constants from Bitcoin Cash aserti3-2d
+            let a: u128 = 195_766_423_245_049u128;
+            let b: u128 = 971_821_376u128;
+            let c: u128 = 5_127u128;
+
+            let poly = a.saturating_mul(x)
+                .saturating_add(b.saturating_mul(x2))
+                .saturating_add(c.saturating_mul(x3))
+                .saturating_add(1u128 << 47);
+
+            let factor_q16 = (poly >> 48).saturating_add(65_536u128);
+
+            (num_shifts, factor_q16)
+        }
+
+        /// Clamp difficulty to min/max bounds
+        fn clamp_difficulty(d: u128) -> u128 {
+            if d < MIN_DIFFICULTY {
+                MIN_DIFFICULTY
+            } else if d > MAX_DIFFICULTY {
+                MAX_DIFFICULTY
+            } else {
+                d
+            }
         }
 
         /// Get current difficulty (for RPC/node)

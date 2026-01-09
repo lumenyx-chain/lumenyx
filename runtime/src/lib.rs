@@ -236,7 +236,6 @@ impl pallet_halving::Config for Runtime {
 // ============================================
 
 impl pallet_difficulty::Config for Runtime {
-    type TimeProvider = Timestamp;
     type RuntimeEvent = RuntimeEvent;
 }
 
