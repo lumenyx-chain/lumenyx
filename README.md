@@ -1,7 +1,5 @@
 # LUMENYX
 
-**[Work in progress - values may change]**
-
 ---
 
 ## A Peer-to-Peer Electronic Cash System
@@ -14,14 +12,65 @@ A purely peer-to-peer version of electronic cash with fixed supply and smart con
 
 ---
 
+### Quick Start
+
+**Requirements:**
+- Linux (Ubuntu, Debian, or similar)
+- x86_64 processor (standard PC/server)
+
+**Run:**
+```bash
+curl -O https://raw.githubusercontent.com/lumenyx-chain/lumenyx/main/lumenyx-setup.sh
+chmod +x lumenyx-setup.sh
+./lumenyx-setup.sh
+```
+
+The script will:
+- Download the binary
+- Generate your wallet (save the seed phrase!)
+- Start mining automatically
+
+📖 **[Why choose LUMENYX?](docs/WHY_LUMENYX.md)**
+
+---
+
+### Check Your Node
+
+**Check if running:**
+```bash
+journalctl -u lumenyx -n 20 --no-pager
+```
+If you see "Imported block" or "Prepared block" = working.
+
+---
+
+### Block Explorer (Polkadot.js Apps)
+
+Browsers block insecure WebSocket by default. Use Firefox with this fix:
+
+1. Open Firefox (Chrome won't work)
+2. Type in address bar: about:config
+3. Click "Accept the Risk and Continue"
+4. In search box type: network.websocket.allowInsecureFromHTTPS
+5. You will see it set to "false"
+6. Click the arrows icon on the right to change it to "true"
+7. Close Firefox completely and reopen it
+8. Go to: https://polkadot.js.org/apps/?rpc=ws://YOUR_NODE_IP:9944
+9. Wait a few seconds - you'll see "LUMENYX Mainnet" in top left
+
+Now you can see blocks, validators, balances, everything.
+
+**Why not HTTPS/WSS?**
+Using wss:// requires a domain and SSL certificate. LUMENYX philosophy: no website, no social media, no domain. Just code.
+
+---
+
 ### 1. Introduction
 
 In 2009, Bitcoin proved that digital scarcity was possible.
-
 In 2015, Ethereum proved that programmable money was possible.
 
 LUMENYX combines both:
-
 - Fixed supply (21,000,000)
 - Smart contracts (EVM compatible)
 - Fast blocks (2.5 seconds)
@@ -32,13 +81,12 @@ LUMENYX combines both:
 
 ### 2. Consensus
 
-Proof of Work with LongestChain fork choice.
+Proof of Work with LongestChain.
 
 | Parameter | Value |
 |-----------|-------|
 | Block time | 2.5 seconds |
 | Hash function | Blake3 |
-| Fork choice | Longest chain |
 
 Anyone with a computer can mine. No stake required. No permission needed.
 
@@ -131,7 +179,6 @@ The foundation is yours. Build the future on it.
 ### 9. Conclusion
 
 LUMENYX is digital cash for the next era:
-
 - Scarce (21M cap)
 - Fast (2.5 sec blocks)
 - Programmable (EVM)
@@ -145,14 +192,10 @@ Just code and consensus.
 
 > *"Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you."*
 
-This ends now.
-
 ---
 
 The chain belongs to no one.
-
 It's yours.
-
 Build the future on it.
 
 ---
