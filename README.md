@@ -143,7 +143,7 @@ Just code and consensus.
 
 ---
 
-> *"Banks ended up in the headlines. Today control over digital money sits in a few hands: founders, large holders, intermediaries and those who write the rules."*
+> *"Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you."*
 
 This ends now.
 

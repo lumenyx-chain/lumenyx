@@ -97,7 +97,7 @@ pub fn blocks_until_halving(block_number: BlockNumber) -> u32 {
     BLOCKS_PER_HALVING - (block_number % BLOCKS_PER_HALVING)
 }
 
-pub const GENESIS_MESSAGE: &str = "Banks ended up in the headlines. Today control over digital money sits in a few hands.";
+pub const GENESIS_MESSAGE: &str = "Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you.";
 
 #[cfg(test)]
 mod tests {

@@ -21,7 +21,7 @@ pub type ChainSpec = sc_service::GenericChainSpec;
 // ============================================
 
 /// Genesis block message - The reason LUMENYX exists
-pub const GENESIS_MESSAGE: &str = "Banks ended up in the headlines. Today control over digital money sits in a few hands.";
+pub const GENESIS_MESSAGE: &str = "Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you.";
 
 /// Network properties
 pub const TOKEN_DECIMALS: u32 = 12;
