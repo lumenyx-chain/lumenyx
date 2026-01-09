@@ -101,7 +101,7 @@ step_prechecks() {
     fi
     
     # Check existing database
-    if [[ -d "$DATA_DIR/chains/lumenyx_mainnet/db" ]]; then
+    if [[ -d "$DATA_DIR" ]]; then
         print_warning "Existing LUMENYX database found"
         if ask_yes_no "Delete it and start fresh?"; then
             rm -rf "$DATA_DIR"
