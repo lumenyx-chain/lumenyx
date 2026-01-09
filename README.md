@@ -32,6 +32,8 @@ The script will:
 
 📖 **[Why choose LUMENYX?](docs/WHY_LUMENYX.md)**
 
+🌐 **[Community Bootnodes](docs/BOOTNODES.md)** - Add your node to the network!
+
 ---
 
 ### Check Your Node
