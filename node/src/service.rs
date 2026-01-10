@@ -4,7 +4,7 @@
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use std::fs;
-use sp_core::{sr25519, Pair, crypto::Ss58Codec, H256, storage::StorageKey};
+use sp_core::{sr25519, Pair, crypto::Ss58Codec, H256, U256, storage::StorageKey};
 use sp_runtime::generic::DigestItem;
 use codec::{Encode, Decode};
 
@@ -138,35 +138,48 @@ fn compute_pow_hash(data: &[u8], nonce: &[u8; 32]) -> H256 {
     hasher.update(nonce);
     H256::from_slice(&hasher.finalize().as_bytes()[..32])
 }
+// PoW constants
+const MIN_DIFFICULTY: u128 = 10_000;
+const MAX_DIFFICULTY: u128 = 1_000_000_000_000_000;
+const POW_LIMIT: H256 = H256::repeat_byte(0xff); // 2^256 - 1
 
 fn difficulty_to_target(difficulty: u128) -> H256 {
-    if difficulty == 0 { return H256::repeat_byte(0xff); }
-    
-    // target = MAX_HASH / difficulty
-    // For simplicity: we create a target where leading bytes are smaller for higher difficulty
-    let mut target = [0xffu8; 32];
-    
-    // Simple approach: divide 256-bit max by difficulty
-    // We use a simplified version that works well for our range
-    let scale = (u128::MAX / difficulty) as u64;
-    let leading_zeros = scale.leading_zeros() / 8;
-    
-    for i in 0..(leading_zeros as usize).min(32) {
-        target[i] = 0;
+    // 1) Clamp difficulty in [MIN, MAX] e protezione da 0
+    let mut d = difficulty;
+    if d < MIN_DIFFICULTY { d = MIN_DIFFICULTY; }
+    if d > MAX_DIFFICULTY { d = MAX_DIFFICULTY; }
+    if d == 0 { d = MIN_DIFFICULTY; }
+
+    // 2) pow_limit (H256) -> U256 (big-endian)
+    let pow_u = U256::from_big_endian(POW_LIMIT.as_fixed_bytes());
+
+    // 3) u128 difficulty -> U256 (zero-extend a 32 byte, big-endian)
+    let mut d_be = [0u8; 32];
+    d_be[16..].copy_from_slice(&d.to_be_bytes());
+    let d_u = U256::from_big_endian(&d_be);
+
+    // 4) target = pow_limit / difficulty
+    let mut target_u = pow_u / d_u;
+
+    // 5) Clamp target: minimo 1, massimo pow_limit
+    if target_u == U256::from(0u64) {
+        target_u = U256::from(1u64);
     }
-    
-    if leading_zeros < 32 {
-        let idx = leading_zeros as usize;
-        if idx < 32 {
-            target[idx] = (0xff >> (scale.leading_zeros() % 8)) as u8;
-        }
+    if target_u > pow_u {
+        target_u = pow_u;
     }
-    
-    H256::from_slice(&target)
+
+    // 6) U256 -> H256 (big-endian)
+    let mut target_be = [0u8; 32];
+    target_u.to_big_endian(&mut target_be);
+    H256::from_slice(&target_be)
 }
 
 fn hash_meets_target(hash: &H256, target: &H256) -> bool {
-    hash.as_bytes() <= target.as_bytes()
+    // Confronto numerico U256 (big-endian) - più sicuro
+    let hash_u = U256::from_big_endian(hash.as_fixed_bytes());
+    let target_u = U256::from_big_endian(target.as_fixed_bytes());
+    hash_u <= target_u
 }
 
 /// Simple verifier - accepts all valid blocks using LongestChain

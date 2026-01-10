@@ -39,7 +39,7 @@ pub mod pallet {
     pub const HALF_LIFE_MS: u64 = 60_000;
 
     /// Initial difficulty - calibrated for ~2.5 sec/block with 1 miner
-    pub const INITIAL_DIFFICULTY: u128 = 1_000_000;
+    pub const INITIAL_DIFFICULTY: u128 = 10_000;
 
     /// Minimum difficulty (prevents too-easy mining)
     pub const MIN_DIFFICULTY: u128 = 10_000;
