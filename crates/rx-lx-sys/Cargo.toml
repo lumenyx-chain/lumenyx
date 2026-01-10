@@ -1,0 +1,12 @@
+[package]
+name = "rx-lx-sys"
+version = "0.1.0"
+edition = "2021"
+description = "FFI bindings for RX-LX (RandomX-LUMENYX) PoW algorithm"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"
+
+[build-dependencies]
+cmake = "0.1"

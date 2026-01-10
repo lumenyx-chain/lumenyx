@@ -1031,6 +1031,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
+name = "cmake"
+version = "0.1.57"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75443c44cd6b379beb8c5b45d85d0773baf31cce901fe7bb252f4eff3008ef7d"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "codespan-reporting"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7144,6 +7153,23 @@ dependencies = [
  "futures",
  "pin-project",
  "static_assertions",
+]
+
+[[package]]
+name = "rx-lx"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "rx-lx-sys",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "rx-lx-sys"
+version = "0.1.0"
+dependencies = [
+ "cmake",
+ "libc",
 ]
 
 [[package]]

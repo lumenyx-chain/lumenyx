@@ -1,0 +1,11 @@
+[package]
+name = "rx-lx"
+version = "0.1.0"
+edition = "2021"
+description = "Safe Rust wrapper for RX-LX (RandomX-LUMENYX) PoW algorithm"
+license = "MIT"
+
+[dependencies]
+rx-lx-sys = { path = "../rx-lx-sys" }
+thiserror = "1.0"
+hex = "0.4"

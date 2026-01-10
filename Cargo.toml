@@ -5,7 +5,7 @@ members = [
     "runtime",
     "pallets/halving",
     "pallets/difficulty",
-    "primitives",
+    "primitives", "crates/rx-lx-sys", "crates/rx-lx",
 ]
 exclude = []
 [workspace.package]
