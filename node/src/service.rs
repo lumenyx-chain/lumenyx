@@ -51,7 +51,7 @@ pub struct FrontierPartialComponents {
 const TARGET_BLOCK_TIME_MS: u64 = 2500;
 
 // Fallback difficulty if we can't read from runtime
-const FALLBACK_DIFFICULTY: u128 = 1_000_000;
+const FALLBACK_DIFFICULTY: u128 = 1; // Backup - genesis should set this
 
 /// LUMENYX Engine ID for digests
 const LUMENYX_ENGINE_ID: sp_runtime::ConsensusEngineId = *b"LMNX";
