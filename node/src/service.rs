@@ -244,10 +244,8 @@ fn difficulty_to_target(difficulty: u128) -> H256 {
 }
 
 fn hash_meets_target(hash: &H256, target: &H256) -> bool {
-    // Confronto numerico U256 (big-endian) - più sicuro
-    let hash_u = U256::from_big_endian(hash.as_fixed_bytes());
-    let target_u = U256::from_big_endian(target.as_fixed_bytes());
-    hash_u <= target_u
+    // Confronto diretto H256 (ChatGPT fix)
+    hash <= target
 }
 
 /// Simple verifier - accepts all valid blocks using LongestChain
