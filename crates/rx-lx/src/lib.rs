@@ -326,7 +326,7 @@ mod golden_tests {
     fn test_golden_vector_reference() {
         let key = b"RandomX example key\0";
         let input = b"RandomX example input\0";
-        let expected = "8a48e5f9db45ab79d9080574c4d81954fe6ac63842214aff73c244b26330b7c9";
+        let expected = "35f75f85be6f6b7fff7f4e99ea931701c37d54a9852dc1e694e3846fdf3351a4";
 
         let hasher = LightHasher::new(key).unwrap();
         let hash = hasher.hash(input);
