@@ -16,7 +16,9 @@ A purely peer-to-peer version of electronic cash with fixed supply and smart con
 
 **Requirements:**
 - Linux (Ubuntu, Debian, or similar)
-- x86_64 processor (standard PC/server)
+- x86_64 processor with AES-NI & PCLMUL (Intel 2010+, AMD 2011+)
+- **2-4 GB RAM** for mining (RX-LX algorithm)
+- 1 GB RAM minimum for sync-only nodes
 
 **Run:**
 ```bash
@@ -90,8 +92,11 @@ Proof of Work with LongestChain.
 |-----------|-------|
 | Block time | 2.5 seconds |
 | Hash function | RX-LX (RandomX-LUMENYX) |
+| ASIC resistance | Yes (custom SBOX, pointer chasing) |
 
-Anyone with a computer can mine. No stake required. No permission needed.
+**RX-LX** is a custom fork of RandomX designed to be ASIC-resistant. Existing RandomX ASICs (Bitmain X5, X9) will produce invalid hashes due to custom SBOX and modified opcodes.
+
+Anyone with a computer can mine. No stake required. No permission needed. No ASIC advantage.
 
 ---
 
