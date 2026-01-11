@@ -89,7 +89,7 @@ Proof of Work with LongestChain.
 | Parameter | Value |
 |-----------|-------|
 | Block time | 2.5 seconds |
-| Hash function | Blake3 |
+| Hash function | RX-LX (RandomX-LUMENYX) |
 
 Anyone with a computer can mine. No stake required. No permission needed.
 
