@@ -106,6 +106,25 @@ pub mod pallet {
     pub type Anchor<T: Config> = StorageValue<_, AnchorInfo<BlockNumberFor<T>>, OptionQuery>;
 
     // ============================================
+    // GENESIS CONFIG
+    // ============================================
+    #[pallet::genesis_config]
+    #[derive(frame_support::DefaultNoBound)]
+    pub struct GenesisConfig<T: Config> {
+        pub initial_difficulty: u128,
+        #[serde(skip)]
+        pub _phantom: core::marker::PhantomData<T>,
+    }
+
+    #[pallet::genesis_build]
+    impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
+        fn build(&self) {
+            <CurrentDifficulty<T>>::put(self.initial_difficulty);
+            log::info!("🎯 Genesis difficulty set to: {}", self.initial_difficulty);
+        }
+    }
+
+    // ============================================
     // EVENTS
     // ============================================
 

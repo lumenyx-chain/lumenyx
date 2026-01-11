@@ -57,6 +57,9 @@ fn development_genesis(
         "balances": {
             "balances": endowed_accounts.iter().cloned().map(|k| (k, 1u128 << 60)).collect::<Vec<_>>(),
         },
+        "difficulty": {
+            "initialDifficulty": 1
+        },
         "evm": {
             "accounts": {
                 "0xd43593c715fdd31c61141abd04a99fd6822c8558": {
@@ -136,6 +139,9 @@ fn mainnet_genesis() -> serde_json::Value {
     serde_json::json!({
         "balances": {
             "balances": genesis_allocations,
+        },
+        "difficulty": {
+            "initialDifficulty": 1
         },
         "evm": {
             "accounts": {}
