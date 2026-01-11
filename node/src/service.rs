@@ -672,6 +672,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     // More iterations for higher difficulty
                     let max_iterations: u64 = 50_000_000;
                     
+                    log::info!("⛏️ Mining #{} with difficulty={} target={:?}", parent_number + 1, difficulty, target);
                     for _ in 0..max_iterations {
                         for i in 0..32 {
                             if nonce[i] == 255 { nonce[i] = 0; }
@@ -681,6 +682,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                         let pow_hash = rx_lx_pow.hash(&header_hash, &nonce);
 
                         if hash_meets_target(&pow_hash, &target) {
+                            log::info!("🎯 Nonce found for #{}; difficulty={}, target={:?}, hash={:?}", parent_number + 1, difficulty, target, pow_hash);
                             let mut import_params = BlockImportParams::new(BlockOrigin::Own, header.clone());
                             // Add PoW seal with nonce
                             let seal = sp_runtime::DigestItem::Seal(LUMENYX_ENGINE_ID, nonce.to_vec());
