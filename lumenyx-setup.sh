@@ -104,9 +104,15 @@ step_prechecks() {
     if [[ -d "$DATA_DIR" ]]; then
         print_warning "Existing LUMENYX database found"
         if ask_yes_no "Delete it and start fresh?"; then
+            # === COMPLETE CLEANUP ===
+            pkill -f lumenyx-node 2>/dev/null || true
+            systemctl stop lumenyx 2>/dev/null || true
+            systemctl disable lumenyx 2>/dev/null || true
+            rm -f /etc/systemd/system/lumenyx.service
+            systemctl daemon-reload 2>/dev/null || true
             rm -rf "$DATA_DIR"
             rm -rf "$LUMENYX_DIR"
-            print_ok "Database deleted"
+            print_ok "Complete cleanup done"
         fi
     fi
     
