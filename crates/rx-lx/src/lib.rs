@@ -28,7 +28,8 @@ pub struct Flags(randomx_flags);
 impl Flags {
     /// Get recommended flags for current CPU
     pub fn recommended() -> Self {
-        unsafe { Flags(randomx_get_flags()) }
+        // RX-LX: Force soft AES to use custom SBOX
+        unsafe { Flags(randomx_get_flags() & !RANDOMX_FLAG_HARD_AES) }
     }
 
     /// Default flags (no optimizations)
@@ -42,6 +43,12 @@ impl Flags {
     }
 
     /// Add hardware AES support
+    // RX-LX: Remove hardware AES to force custom SBOX
+    pub fn without_hard_aes(self) -> Self {
+        Flags(self.0 & !RANDOMX_FLAG_HARD_AES)
+    }
+
+    /// Add hardware AES support (NOT recommended for RX-LX - breaks custom SBOX)
     pub fn with_hard_aes(self) -> Self {
         Flags(self.0 | RANDOMX_FLAG_HARD_AES)
     }
@@ -326,7 +333,7 @@ mod golden_tests {
     fn test_golden_vector_reference() {
         let key = b"RandomX example key\0";
         let input = b"RandomX example input\0";
-        let expected = "35f75f85be6f6b7fff7f4e99ea931701c37d54a9852dc1e694e3846fdf3351a4";
+        let expected = "61c6631f108d9aad898f609a1556c133b6b2d2e8285b7e6a9752c3b1af4ae99d";
 
         let hasher = LightHasher::new(key).unwrap();
         let hash = hasher.hash(input);
