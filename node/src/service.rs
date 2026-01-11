@@ -22,6 +22,11 @@ use sp_consensus::{BlockOrigin, SelectChain, SyncOracle};
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT};
 use sp_api::ProvideRuntimeApi;
 
+// RX-LX imports
+use rx_lx::{Flags, Cache, Vm};
+
+use crate::rx_lx::seed as seed_sched;
+
 // Frontier imports
 use fc_mapping_sync::{EthereumBlockNotificationSinks, EthereumBlockNotification, SyncStrategy, kv::MappingSyncWorker};
 use fc_rpc::EthTask;
@@ -132,7 +137,70 @@ fn get_or_create_miner_key(base_path: &std::path::Path) -> sr25519::Pair {
     pair
 }
 
-fn compute_pow_hash(data: &[u8], nonce: &[u8; 32]) -> H256 {
+/// RX-LX PoW state - holds cache and VM, reinitializes on seed change
+struct RxLxPow {
+    flags: Flags,
+    cache: Cache,
+    vm: Vm,
+    seed_height: u64,
+    seed: H256,
+}
+
+impl RxLxPow {
+    /// Initialize RX-LX with seed for given height
+    fn new<F>(height: u64, get_block_hash: F) -> Result<Self, String>
+    where
+        F: Fn(u64) -> H256,
+    {
+        let flags = Flags::recommended(); // soft AES forced for custom SBOX
+        let mut cache = Cache::alloc(flags).map_err(|e| format!("Cache alloc failed: {:?}", e))?;
+        
+        let seed_height = seed_sched::seed_height(height);
+        let seed = seed_sched::get_seed(height, &get_block_hash);
+        
+        log::info!("🔧 Initializing RX-LX cache with seed from block #{}", seed_height);
+        cache.init(seed.as_ref());
+        
+        let vm = Vm::light(flags, &cache).map_err(|e| format!("VM creation failed: {:?}", e))?;
+        log::info!("✅ RX-LX initialized successfully");
+        
+        Ok(Self { flags, cache, vm, seed_height, seed })
+    }
+    
+    /// Check if seed changed and reinitialize if needed
+    fn maybe_reseed<F>(&mut self, height: u64, get_block_hash: F) -> Result<(), String>
+    where
+        F: Fn(u64) -> H256,
+    {
+        let new_seed_height = seed_sched::seed_height(height);
+        if new_seed_height == self.seed_height {
+            return Ok(());
+        }
+        
+        let new_seed = seed_sched::get_seed(height, &get_block_hash);
+        log::info!("🔄 RX-LX seed change: block #{} -> #{}", self.seed_height, new_seed_height);
+        
+        self.cache.init(new_seed.as_ref());
+        self.vm = Vm::light(self.flags, &self.cache).map_err(|e| format!("VM recreation failed: {:?}", e))?;
+        
+        self.seed_height = new_seed_height;
+        self.seed = new_seed;
+        log::info!("✅ RX-LX reseeded successfully");
+        Ok(())
+    }
+    
+    /// Compute RX-LX hash: input = header_hash || nonce (64 bytes)
+    fn hash(&self, header_hash: &H256, nonce: &[u8; 32]) -> H256 {
+        let mut input = [0u8; 64];
+        input[..32].copy_from_slice(header_hash.as_ref());
+        input[32..].copy_from_slice(nonce);
+        H256::from_slice(&self.vm.hash(&input))
+    }
+}
+
+// Legacy Blake3 function - kept for reference, no longer used
+#[allow(dead_code)]
+fn compute_pow_hash_blake3(data: &[u8], nonce: &[u8; 32]) -> H256 {
     let mut hasher = blake3::Hasher::new();
     hasher.update(data);
     hasher.update(nonce);
@@ -484,7 +552,25 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 const MAX_FAILURES_BEFORE_POOL_CLEAR: u32 = 3;
                 let mut last_difficulty: u128 = FALLBACK_DIFFICULTY;
                 let mut blocks_since_difficulty_log: u32 = 0;
-
+                
+                // RX-LX: Initialize PoW engine
+                let get_block_hash = |height: u64| -> H256 {
+                    let block_num: u32 = height as u32;
+                    match mining_client.hash(block_num) {
+                        Ok(Some(hash)) => hash,
+                        _ => H256::zero(),
+                    }
+                };
+                
+                let mut rx_lx_pow = match RxLxPow::new(0, &get_block_hash) {
+                    Ok(pow) => pow,
+                    Err(e) => {
+                        log::error!("❌ Failed to initialize RX-LX: {}", e);
+                        return;
+                    }
+                };
+                log::info!("⛏️  RX-LX PoW engine initialized!");
+                
                 loop {
                     if mining_sync_service.is_major_syncing() {
                         log::debug!("⏸️  Syncing in progress...");
@@ -570,7 +656,13 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     let (block, storage_changes) = (proposal.block, proposal.storage_changes);
                     let (header, body) = block.deconstruct();
                     let header_hash = header.hash();
-
+                    
+                    // RX-LX: Check if seed needs to change
+                    if let Err(e) = rx_lx_pow.maybe_reseed(parent_number as u64 + 1, &get_block_hash) {
+                        log::error!("❌ RX-LX reseed failed: {}", e);
+                        continue;
+                    }
+                    
                     let mut nonce = [0u8; 32];
                     let seed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -588,7 +680,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                             else { nonce[i] += 1; break; }
                         }
 
-                        let pow_hash = compute_pow_hash(header_hash.as_ref(), &nonce);
+                        let pow_hash = rx_lx_pow.hash(&header_hash, &nonce);
 
                         if hash_meets_target(&pow_hash, &target) {
                             let mut import_params = BlockImportParams::new(BlockOrigin::Own, header.clone());
