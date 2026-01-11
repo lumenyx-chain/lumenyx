@@ -1,0 +1,29 @@
+[package]
+name = "pallet-time-rules"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+frame-support = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
+frame-system  = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
+sp-runtime    = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
+sp-std        = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
+
+codec = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
+scale-info = { version = "2", default-features = false, features = ["derive"] }
+
+[dev-dependencies]
+sp-io = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
+
+[features]
+default = ["std"]
+std = [
+  "frame-support/std",
+  "frame-system/std",
+  "sp-runtime/std",
+  "sp-std/std",
+  "codec/std",
+  "scale-info/std",
+  "sp-io/std",
+]

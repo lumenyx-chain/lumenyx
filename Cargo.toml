@@ -5,6 +5,7 @@ members = [
     "runtime",
     "pallets/halving",
     "pallets/difficulty",
+    "pallets/time-rules",
     "primitives", "crates/rx-lx-sys", "crates/rx-lx",
 ]
 exclude = []

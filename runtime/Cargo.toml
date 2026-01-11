@@ -62,6 +62,7 @@ pallet-evm-precompile-blake2 = { git = "https://github.com/polkadot-evm/frontier
 lumenyx-primitives = { path = "../primitives", default-features = false }
 pallet-halving = { path = "../pallets/halving", default-features = false }
 pallet-difficulty = { path = "../pallets/difficulty", default-features = false }
+pallet-time-rules = { path = "../pallets/time-rules", default-features = false }
 
 [features]
 default = ["std"]
@@ -108,5 +109,6 @@ std = [
     "lumenyx-primitives/std",
     "pallet-halving/std",
     "pallet-difficulty/std",
+    "pallet-time-rules/std",
     "substrate-wasm-builder",
 ]

@@ -138,9 +138,21 @@ impl frame_system::Config for Runtime {
     type MaxConsumers = ConstU32<16>;
 }
 
+pub struct TimeRulesOnTimestampSet;
+impl frame_support::traits::OnTimestampSet<u64> for TimeRulesOnTimestampSet {
+    fn on_timestamp_set(now: u64) {
+        pallet_time_rules::Pallet::<Runtime>::on_timestamp_set(now)
+            .expect("MTP rule violated; block invalid");
+    }
+}
+
+impl pallet_time_rules::Config for Runtime {
+    type Moment = u64;
+}
+
 impl pallet_timestamp::Config for Runtime {
     type Moment = u64;
-    type OnTimestampSet = ();
+    type OnTimestampSet = TimeRulesOnTimestampSet;
     type MinimumPeriod = ConstU64<{ SLOT_DURATION / 2 }>;
     type WeightInfo = ();
 }
@@ -425,6 +437,7 @@ construct_runtime!(
     pub struct Runtime {
         System: frame_system,
         Timestamp: pallet_timestamp,
+        TimeRules: pallet_time_rules,
         Balances: pallet_balances,
         TransactionPayment: pallet_transaction_payment,
         Authorship: pallet_authorship,

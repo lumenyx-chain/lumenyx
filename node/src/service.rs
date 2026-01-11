@@ -207,7 +207,7 @@ fn compute_pow_hash_blake3(data: &[u8], nonce: &[u8; 32]) -> H256 {
     H256::from_slice(&hasher.finalize().as_bytes()[..32])
 }
 // PoW constants
-const MIN_DIFFICULTY: u128 = 10_000;
+const MIN_DIFFICULTY: u128 = 100;
 const MAX_DIFFICULTY: u128 = 1_000_000_000_000_000;
 const POW_LIMIT: H256 = H256::repeat_byte(0xff); // 2^256 - 1
 

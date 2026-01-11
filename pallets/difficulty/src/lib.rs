@@ -39,16 +39,16 @@ pub mod pallet {
     pub const HALF_LIFE_MS: u64 = 60_000;
 
     /// Initial difficulty - calibrated for ~2.5 sec/block with 1 miner
-    pub const INITIAL_DIFFICULTY: u128 = 10_000;
+    pub const INITIAL_DIFFICULTY: u128 = 250;
 
     /// Minimum difficulty (prevents too-easy mining)
-    pub const MIN_DIFFICULTY: u128 = 10_000;
+    pub const MIN_DIFFICULTY: u128 = 100;
 
     /// Maximum difficulty (prevents stuck chain)
     pub const MAX_DIFFICULTY: u128 = 1_000_000_000_000_000;
 
     /// Minimum solve time clamp (prevents timestamp manipulation)
-    pub const MIN_SOLVE_TIME_MS: u64 = 1;
+    pub const MIN_SOLVE_TIME_MS: u64 = 50;
 
     /// Maximum solve time clamp (10x target, prevents timestamp manipulation)
     pub const MAX_SOLVE_TIME_MS: u64 = 25_000;
