@@ -374,3 +374,73 @@ mod golden_tests {
         assert_ne!(hash1, hash2, "Different seeds must produce different hashes!");
     }
 }
+
+#[cfg(test)]
+mod consensus_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// Test consensus: 10,000 hashes must be deterministic and unique
+    #[test]
+    fn test_consensus_10k_hashes() {
+        let flags = Flags::recommended();
+        let mut cache = Cache::alloc(flags).expect("Failed to alloc cache");
+        let seed = b"RX-LX-CONSENSUS-TEST-SEED-v1";
+        cache.init(seed);
+        
+        let vm = Vm::light(flags, &cache).expect("Failed to create VM");
+        
+        let mut hashes = HashSet::new();
+        let mut first_run = Vec::new();
+        
+        // First run: compute 10,000 hashes
+        for i in 0u64..10_000 {
+            let input = format!("consensus-test-input-{:08}", i);
+            let hash = vm.hash(input.as_bytes());
+            first_run.push(hash);
+            hashes.insert(hash);
+        }
+        
+        // All hashes should be unique (collision resistance)
+        assert_eq!(hashes.len(), 10_000, "Hash collision detected!");
+        
+        // Second run: verify determinism
+        for i in 0u64..10_000 {
+            let input = format!("consensus-test-input-{:08}", i);
+            let hash = vm.hash(input.as_bytes());
+            assert_eq!(hash, first_run[i as usize], 
+                "Determinism failure at input {}", i);
+        }
+        
+        println!("✓ 10,000 hashes: all unique and deterministic");
+    }
+    
+    /// Test consensus: verify hash of known inputs
+    #[test]
+    fn test_consensus_known_vectors() {
+        let flags = Flags::recommended();
+        let mut cache = Cache::alloc(flags).expect("Failed to alloc cache");
+        cache.init(b"RX-LX-KNOWN-VECTORS");
+        
+        let vm = Vm::light(flags, &cache).expect("Failed to create VM");
+        
+        // Test vector 1: empty input
+        let hash1 = vm.hash(b"");
+        println!("Empty input hash: {}", hex::encode(hash1));
+        
+        // Test vector 2: "LUMENYX"
+        let hash2 = vm.hash(b"LUMENYX");
+        println!("LUMENYX hash: {}", hex::encode(hash2));
+        
+        // Test vector 3: block header simulation
+        let hash3 = vm.hash(b"block:1:prev_hash:0000000000:nonce:12345678");
+        println!("Block header hash: {}", hex::encode(hash3));
+        
+        // Verify they're all different
+        assert_ne!(hash1, hash2);
+        assert_ne!(hash2, hash3);
+        assert_ne!(hash1, hash3);
+        
+        println!("✓ Known vectors: all unique");
+    }
+}
