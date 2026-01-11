@@ -684,6 +684,9 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
                         if hash_meets_target(&pow_hash, &target) {
                             let mut import_params = BlockImportParams::new(BlockOrigin::Own, header.clone());
+                            // Add PoW seal with nonce
+                            let seal = sp_runtime::DigestItem::Seal(LUMENYX_ENGINE_ID, nonce.to_vec());
+                            import_params.post_digests.push(seal);
                             import_params.body = Some(body.clone());
                             import_params.state_action = sc_consensus::StateAction::ApplyChanges(
                                 sc_consensus::StorageChanges::Changes(storage_changes)
