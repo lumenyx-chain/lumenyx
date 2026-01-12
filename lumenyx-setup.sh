@@ -112,6 +112,7 @@ step_prechecks() {
             systemctl daemon-reload 2>/dev/null || true
             rm -rf "$DATA_DIR"
             rm -rf "$LUMENYX_DIR"
+            rm -f "$HOME/lumenyx-node" "$HOME/sha256sum.txt" "$HOME/lumenyx" 2>/dev/null
             print_ok "Complete cleanup done"
         fi
     fi
