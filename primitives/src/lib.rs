@@ -40,8 +40,8 @@ pub const BLOCK_REWARD: u128 = 207_953_080_000;
 /// Blocks per halving: 4 years exactly (12,623,040 * 4)
 pub const BLOCKS_PER_HALVING: u32 = 50_492_160;
 
-/// Minimum block reward before stopping emission
-pub const MINIMUM_BLOCK_REWARD: u128 = 1;
+/// Minimum block reward before stopping emission (Bitcoin-like: can be 0)
+pub const MINIMUM_BLOCK_REWARD: u128 = 0;
 
 /// Base fee for simple transfer
 pub const BASE_TRANSFER_FEE: u128 = 1_000_000;
@@ -57,31 +57,45 @@ pub type Hash = sp_core::H256;
 pub type Signature = MultiSignature;
 pub type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
 
+const MAX_HALVINGS: u32 = 128;
+
+/// Bitcoin-like block reward:
+/// - reward halves every BLOCKS_PER_HALVING blocks via right shift
+/// - when the shift produces 0 (in smallest unit), emission stops (reward=0)
 pub fn calculate_block_reward(block_number: BlockNumber) -> Balance {
     let halvings = block_number / BLOCKS_PER_HALVING;
-    if halvings >= 64 {
-        return MINIMUM_BLOCK_REWARD;
+
+    // Prevent shifting by >= 128 (would panic for u128 shifts).
+    if halvings >= MAX_HALVINGS {
+        return 0;
     }
+
     let reward = BLOCK_REWARD >> halvings;
-    if reward < MINIMUM_BLOCK_REWARD {
-        MINIMUM_BLOCK_REWARD
+
+    // With MINIMUM_BLOCK_REWARD = 0, this makes the schedule stop cleanly at 0.
+    if reward <= MINIMUM_BLOCK_REWARD {
+        0
     } else {
         reward
     }
 }
 
 pub fn calculate_supply_at_block(block_number: BlockNumber) -> Balance {
-    let mut total = 0u128;
-    let mut remaining_blocks = block_number;
-    let mut current_reward = BLOCK_REWARD;
-    let mut halving = 0u32;
-    while remaining_blocks > 0 && current_reward >= MINIMUM_BLOCK_REWARD && halving < 64 {
+    let mut total: u128 = 0;
+    let mut remaining_blocks: u32 = block_number;
+    let mut current_reward: u128 = BLOCK_REWARD;
+    let mut halving: u32 = 0;
+
+    while remaining_blocks > 0 && current_reward > 0 && halving < MAX_HALVINGS {
         let blocks_in_era = remaining_blocks.min(BLOCKS_PER_HALVING);
-        total += current_reward * blocks_in_era as u128;
+
+        total = total.saturating_add(current_reward.saturating_mul(blocks_in_era as u128));
+
         remaining_blocks = remaining_blocks.saturating_sub(BLOCKS_PER_HALVING);
-        halving += 1;
+        halving = halving.saturating_add(1);
         current_reward = BLOCK_REWARD >> halving;
     }
+
     total.min(TOTAL_SUPPLY)
 }
 
@@ -97,7 +111,8 @@ pub fn blocks_until_halving(block_number: BlockNumber) -> u32 {
     BLOCKS_PER_HALVING - (block_number % BLOCKS_PER_HALVING)
 }
 
-pub const GENESIS_MESSAGE: &str = "Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you.";
+pub const GENESIS_MESSAGE: &str =
+    "Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you.";
 
 #[cfg(test)]
 mod tests {
@@ -127,5 +142,12 @@ mod tests {
         let daily = daily_emission(0);
         let daily_lumenyx = daily / LUMENYX;
         assert!(daily_lumenyx >= 7000 && daily_lumenyx <= 7500);
+    }
+
+    #[test]
+    fn test_reward_reaches_zero_eventually() {
+        // It must be possible for reward to become 0 (Bitcoin-like).
+        let very_late = BLOCKS_PER_HALVING.saturating_mul(200);
+        assert_eq!(calculate_block_reward(very_late), 0);
     }
 }
