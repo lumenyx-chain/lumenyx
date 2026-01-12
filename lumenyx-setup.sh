@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v1.4
+# LUMENYX SETUP SCRIPT v1.5
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
@@ -17,8 +17,8 @@ NC='\033[0m'
 # Configuration
 LUMENYX_DIR="$HOME/.lumenyx"
 BINARY_NAME="lumenyx-node"
-BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.4.0/lumenyx-node"
-CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.4.0/lumenyx-node-v1.4.0-sha256.txt"
+BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.5.0/lumenyx-node"
+CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.5.0/lumenyx-node-v1.5.0-sha256.txt"
 BOOTNODE="/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWC7ceutTSYq5kUD4axsAPBmiXJ6kpCVxL9MA4tKPJPSBa"
 GITHUB_REPO="https://github.com/lumenyx-chain/lumenyx.git"
 SERVICE_FILE="/etc/systemd/system/lumenyx.service"
