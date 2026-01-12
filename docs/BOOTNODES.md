@@ -36,5 +36,3 @@ We won't maintain this list forever. The community owns the network.
 Share bootnodes freely. Help others connect. Build the network together.
 
 The more nodes, the stronger LUMENYX becomes.
-
----
