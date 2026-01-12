@@ -47,7 +47,6 @@ type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
 pub type FrontierBackend = fc_db::Backend<Block, FullClient>;
 
 /// Type alias for the PoW block import
-pub type PowBlockImport = RxLxPowBlockImport<FullClient, Arc<FullClient>>;
 
 pub struct FrontierPartialComponents {
     pub filter_pool: Option<FilterPool>,
@@ -304,7 +303,6 @@ pub fn new_partial(
         sc_transaction_pool::FullPool<Block, FullClient>,
         (
             Arc<FullClient>,
-            Arc<PowBlockImport>,
             Option<Telemetry>,
             Arc<FrontierBackend>,
             FrontierPartialComponents,
@@ -364,17 +362,17 @@ pub fn new_partial(
     // ============================================
     // This wrapper verifies RX-LX PoW before importing blocks
     // Both local blocks and network blocks go through this
-    let pow_block_import = Arc::new(RxLxPowBlockImport::new(
+    let pow_block_import = RxLxPowBlockImport::new(
         client.clone(),
-        client.clone(), // inner = client
-    ));
+        client.clone(),
+    );
 
     let verifier = RxLxVerifier;
 
     // Use pow_block_import instead of client.clone()
     let import_queue = sc_consensus::BasicQueue::new(
         verifier,
-        Box::new(pow_block_import.clone()),
+        Box::new(pow_block_import),
         None,
         &task_manager.spawn_essential_handle(),
         config.prometheus_registry(),
@@ -400,7 +398,7 @@ pub fn new_partial(
         select_chain,
         import_queue,
         transaction_pool,
-        other: (client, pow_block_import, telemetry, frontier_backend, frontier_partial),
+        other: (client, telemetry, frontier_backend, frontier_partial),
     })
 }
 
@@ -413,7 +411,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         select_chain,
         import_queue,
         transaction_pool,
-        other: (_, pow_block_import, mut telemetry, frontier_backend, frontier_partial),
+        other: (_, mut telemetry, frontier_backend, frontier_partial),
     } = new_partial(&config)?;
 
     let net_config = sc_network::config::FullNetworkConfiguration::<Block, <Block as BlockT>::Hash, sc_network::NetworkWorker<Block, <Block as BlockT>::Hash>>::new(&config.network, config.prometheus_registry().cloned());
@@ -446,7 +444,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         50,
         50,
         prometheus_registry.clone(),
-    ));
+    );
 
     let pubsub_notification_sinks: Arc<EthereumBlockNotificationSinks<EthereumBlockNotification<Block>>> = Default::default();
 
@@ -579,7 +577,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
         let mining_client = client.clone();
         // USE POW_BLOCK_IMPORT instead of client.clone()
-        let block_import = pow_block_import.clone();
+        let block_import = RxLxPowBlockImport::new(client.clone(), client.clone());
         let select_chain_mining = select_chain.clone();
         let mining_sync_service = sync_service.clone();
         let mining_tx_pool = transaction_pool.clone();
