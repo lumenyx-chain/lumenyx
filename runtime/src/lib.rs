@@ -336,11 +336,26 @@ where
     }
 }
 
-pub struct FixedGasPrice;
-impl FeeCalculator for FixedGasPrice {
+/// Dynamic gas price from pallet_base_fee (EIP-1559 style)
+/// Reads the current base fee and uses it as min_gas_price
+pub struct BaseFeeAsGasPrice;
+impl FeeCalculator for BaseFeeAsGasPrice {
     fn min_gas_price() -> (U256, Weight) {
-        // Min gas price: 45 planck/gas (as per Master document)
-        (U256::from(45u64), Weight::zero())
+        // Read current base fee from pallet_base_fee (EIP-1559 dynamic)
+        let base = pallet_base_fee::Pallet::<Runtime>::base_fee_per_gas();
+        (base, Weight::zero())
+    }
+}
+
+/// Handler for EVM base fee - sends 100% to block author (miner)
+pub struct EvmBaseFeeToAuthor;
+impl frame_support::traits::OnUnbalanced<frame_support::traits::fungible::Credit<AccountId, Balances>> for EvmBaseFeeToAuthor {
+    fn on_nonzero_unbalanced(credit: frame_support::traits::fungible::Credit<AccountId, Balances>) {
+        use frame_support::traits::fungible::Balanced;
+        // Send base fee to block author (miner) - 100% to miner, no burn
+        if let Some(author) = pallet_authorship::Pallet::<Runtime>::author() {
+            let _ = <Balances as Balanced<AccountId>>::resolve(&author, credit);
+        }
     }
 }
 
@@ -358,7 +373,7 @@ impl<F: FindAuthor<AccountId>> FindAuthor<H160> for FindAuthorTruncated<F> {
 }
 
 impl pallet_evm::Config for Runtime {
-    type FeeCalculator = FixedGasPrice;
+    type FeeCalculator = BaseFeeAsGasPrice;  // Dynamic EIP-1559 base fee
     type GasWeightMapping = pallet_evm::FixedGasWeightMapping<Self>;
     type WeightPerGas = WeightPerGas;
     type BlockHashMapping = pallet_ethereum::EthereumBlockHashMapping<Self>;
@@ -372,7 +387,7 @@ impl pallet_evm::Config for Runtime {
     type ChainId = ChainId;
     type BlockGasLimit = BlockGasLimit;
     type Runner = pallet_evm::runner::stack::Runner<Self>;
-    type OnChargeTransaction = ();
+    type OnChargeTransaction = pallet_evm::EVMFungibleAdapter<Balances, EvmBaseFeeToAuthor>;  // 100% fees to miner
     type OnCreate = ();
     type FindAuthor = FindAuthorTruncated<PowAuthorFinder>;
     type GasLimitPovSizeRatio = ConstU64<4>;
@@ -394,7 +409,9 @@ impl pallet_ethereum::Config for Runtime {
 }
 
 parameter_types! {
-    pub DefaultBaseFeePerGas: U256 = U256::from(1_000_000_000u64);
+    // 1000 planck/gas = "1 gwei equivalent" for 12 decimals
+    // This is the starting base fee, will adjust dynamically via EIP-1559
+    pub DefaultBaseFeePerGas: U256 = U256::from(1_000u64);
     pub DefaultElasticity: Permill = Permill::from_parts(125_000);
 }
 
