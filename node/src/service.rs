@@ -374,7 +374,7 @@ pub fn new_partial(
     // Use pow_block_import instead of client.clone()
     let import_queue = sc_consensus::BasicQueue::new(
         verifier,
-        Box::new((*pow_block_import).clone()),
+        Box::new(pow_block_import.clone()),
         None,
         &task_manager.spawn_essential_handle(),
         config.prometheus_registry(),
