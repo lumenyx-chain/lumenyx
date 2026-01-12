@@ -24,25 +24,25 @@
 ```bash
 # Install dependencies
 sudo apt update
-sudo apt install -y build-essential git clang curl libssl-dev llvm libudev-dev protobuf-compiler
+sudo apt install -y build-essential git clang curl libssl-dev llvm libudev-dev protobuf-compiler cmake
 
 # Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
 
 # Clone and build
-git clone https://github.com/lumenyx-chain/lumenyx
+git clone --recursive https://github.com/lumenyx-chain/lumenyx
 cd lumenyx
 cargo build --release
 ```
 
 ### macOS
 ```bash
-brew install openssl protobuf
+brew install openssl protobuf cmake
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
 
-git clone https://github.com/lumenyx-chain/lumenyx
+git clone --recursive https://github.com/lumenyx-chain/lumenyx
 cd lumenyx
 cargo build --release
 ```
@@ -55,12 +55,12 @@ Build takes 10-30 minutes.
 
 ### Full Node (sync only)
 ```bash
-./target/release/lumenyx-node --chain mainnet --name "your-node"
+./target/release/lumenyx --chain lumenyx --name "your-node"
 ```
 
-### Miner
+### Validator/Miner
 ```bash
-./target/release/lumenyx-node --chain mainnet --mine --name "your-miner"
+./target/release/lumenyx --chain lumenyx --validator --name "your-miner"
 ```
 
 That's it. You're mining.
@@ -71,9 +71,9 @@ That's it. You're mining.
 
 | Flag | Description |
 |------|-------------|
-| `--chain mainnet` | Mainnet |
+| `--chain lumenyx` | Mainnet |
 | `--chain dev` | Development mode |
-| `--mine` | Enable mining |
+| `--validator` | Enable mining/validating |
 | `--name "name"` | Node name |
 | `--rpc-cors all` | Allow RPC from any origin |
 | `--rpc-external` | Expose RPC externally |
@@ -82,7 +82,7 @@ That's it. You're mining.
 
 ## Verify
 ```bash
-./target/release/lumenyx-node --version
+./target/release/lumenyx --version
 ```
 
 ---
@@ -91,9 +91,9 @@ That's it. You're mining.
 
 | OS | Path |
 |----|------|
-| Linux | `~/.local/share/lumenyx-node/` |
-| macOS | `~/Library/Application Support/lumenyx-node/` |
-| Windows | `%APPDATA%\lumenyx-node\` |
+| Linux | `~/.local/share/lumenyx/` |
+| macOS | `~/Library/Application Support/lumenyx/` |
+| Windows | `%APPDATA%\lumenyx\` |
 
 To reset: delete the data directory and restart.
 
