@@ -137,7 +137,7 @@ Everything built on Ethereum can be built on LUMENYX.
 |-----------|-------|
 | Fee destination | 100% to miners |
 | Min gas price | 45 planck/gas |
-| Dynamic adjustment | ±10% per block |
+| Fee model | Fixed (predictable) |
 
 Fees stay low. Even if LUMENYX reaches $1000, a simple transfer costs less than $0.001.
 
