@@ -256,7 +256,7 @@ impl Verifier<Block> for RxLxVerifier {
         let mut moved: Vec<DigestItem> = Vec::new();
 
         block.header.digest_mut().logs.retain(|item| {
-            let is_preruntime = item.as_pre_runtime().map(|(id, _)| id == &LUMENYX_ENGINE_ID).unwrap_or(false);
+            let is_preruntime = item.as_pre_runtime().map(|(id, _)| id == LUMENYX_ENGINE_ID).unwrap_or(false);
             let is_seal = matches!(item, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID);
             let is_consensus = matches!(item, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID);
             
@@ -374,7 +374,7 @@ pub fn new_partial(
     // Use pow_block_import instead of client.clone()
     let import_queue = sc_consensus::BasicQueue::new(
         verifier,
-        Box::new(pow_block_import.clone()),
+        Box::new((*pow_block_import).clone()),
         None,
         &task_manager.spawn_essential_handle(),
         config.prometheus_registry(),
