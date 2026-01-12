@@ -1,7 +1,6 @@
 //! LUMENYX Service Configuration - PoW with Dynamic Difficulty
 //!
 //! PoW consensus with on-chain difficulty adjustment.
-//! Uses RxLxPowBlockImport wrapper for proper PoW verification during sync.
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use std::fs;
@@ -28,9 +27,6 @@ use rx_lx::{Flags, Cache, Vm};
 
 use crate::rx_lx::seed as seed_sched;
 
-// PoW Block Import wrapper
-use crate::pow_import::RxLxPowBlockImport;
-
 // Frontier imports
 use fc_mapping_sync::{EthereumBlockNotificationSinks, EthereumBlockNotification, SyncStrategy, kv::MappingSyncWorker};
 use fc_rpc::EthTask;
@@ -46,8 +42,6 @@ type FullBackend = TFullBackend<Block>;
 type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
 pub type FrontierBackend = fc_db::Backend<Block, FullClient>;
 
-/// Type alias for the PoW block import
-
 pub struct FrontierPartialComponents {
     pub filter_pool: Option<FilterPool>,
     pub fee_history_cache: FeeHistoryCache,
@@ -57,7 +51,7 @@ pub struct FrontierPartialComponents {
 const TARGET_BLOCK_TIME_MS: u64 = 2500;
 
 // Fallback difficulty if we can't read from runtime
-const FALLBACK_DIFFICULTY: u128 = 1;
+const FALLBACK_DIFFICULTY: u128 = 1; // Backup - genesis should set this
 
 /// LUMENYX Engine ID for digests
 const LUMENYX_ENGINE_ID: sp_runtime::ConsensusEngineId = *b"LMNX";
@@ -70,6 +64,7 @@ struct MinerAddressDigest {
 
 /// Generate storage key for Difficulty::CurrentDifficulty
 fn difficulty_storage_key() -> StorageKey {
+    // twox_128("Difficulty") ++ twox_128("CurrentDifficulty")
     let mut key = sp_core::twox_128(b"Difficulty").to_vec();
     key.extend(sp_core::twox_128(b"CurrentDifficulty"));
     StorageKey(key)
@@ -84,6 +79,7 @@ where
     
     match client.storage(at, &key) {
         Ok(Some(data)) => {
+            // Decode u128 from storage
             match u128::decode(&mut &data.0[..]) {
                 Ok(diff) => {
                     log::debug!("📊 Read difficulty from storage: {}", diff);
@@ -156,7 +152,7 @@ impl RxLxPow {
     where
         F: Fn(u64) -> H256,
     {
-        let flags = Flags::recommended();
+        let flags = Flags::recommended(); // soft AES forced for custom SBOX
         let mut cache = Cache::alloc(flags).map_err(|e| format!("Cache alloc failed: {:?}", e))?;
         
         let seed_height = seed_sched::seed_height(height);
@@ -202,25 +198,38 @@ impl RxLxPow {
     }
 }
 
+// Legacy Blake3 function - kept for reference, no longer used
+#[allow(dead_code)]
+fn compute_pow_hash_blake3(data: &[u8], nonce: &[u8; 32]) -> H256 {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(data);
+    hasher.update(nonce);
+    H256::from_slice(&hasher.finalize().as_bytes()[..32])
+}
 // PoW constants
 const MIN_DIFFICULTY: u128 = 1;
 const MAX_DIFFICULTY: u128 = u128::MAX;
-const POW_LIMIT: H256 = H256::repeat_byte(0xff);
+const POW_LIMIT: H256 = H256::repeat_byte(0xff); // 2^256 - 1
 
 fn difficulty_to_target(difficulty: u128) -> H256 {
+    // 1) Clamp difficulty in [MIN, MAX] e protezione da 0
     let mut d = difficulty;
     if d < MIN_DIFFICULTY { d = MIN_DIFFICULTY; }
     if d > MAX_DIFFICULTY { d = MAX_DIFFICULTY; }
     if d == 0 { d = MIN_DIFFICULTY; }
 
+    // 2) pow_limit (H256) -> U256 (big-endian)
     let pow_u = U256::from_big_endian(POW_LIMIT.as_fixed_bytes());
 
+    // 3) u128 difficulty -> U256 (zero-extend a 32 byte, big-endian)
     let mut d_be = [0u8; 32];
     d_be[16..].copy_from_slice(&d.to_be_bytes());
     let d_u = U256::from_big_endian(&d_be);
 
+    // 4) target = pow_limit / difficulty
     let mut target_u = pow_u / d_u;
 
+    // 5) Clamp target: minimo 1, massimo pow_limit
     if target_u == U256::from(0u64) {
         target_u = U256::from(1u64);
     }
@@ -228,21 +237,22 @@ fn difficulty_to_target(difficulty: u128) -> H256 {
         target_u = pow_u;
     }
 
+    // 6) U256 -> H256 (big-endian)
     let mut target_be = [0u8; 32];
     target_u.to_big_endian(&mut target_be);
     H256::from_slice(&target_be)
 }
 
 fn hash_meets_target(hash: &H256, target: &H256) -> bool {
+    // Confronto diretto H256 (ChatGPT fix)
     hash <= target
 }
 
-/// RxLxVerifier - Verifies incoming blocks and normalizes digests
+/// RxLxVerifier - Verifica blocchi PoW e gestisce correttamente il seal
 /// 
-/// This verifier:
-/// 1. Extracts the seal from header.digest.logs
-/// 2. Moves it to post_digests (so runtime sees header without seal)
-/// 3. Keeps only PreRuntime digest in header
+/// Quando un blocco arriva dalla rete, il seal è in header.digest.logs.
+/// RxLxVerifier - Strip ALL post-runtime digests from header, move to post_digests
+/// Il runtime si aspetta header con SOLO PreRuntime, tutto il resto va in post_digests
 pub struct RxLxVerifier;
 
 #[async_trait::async_trait]
@@ -251,36 +261,37 @@ impl Verifier<Block> for RxLxVerifier {
         &self,
         mut block: BlockImportParams<Block>,
     ) -> Result<BlockImportParams<Block>, String> {
-        // Move ALL LUMENYX digests (except PreRuntime) to post_digests
+        // Sposta TUTTI i digest LUMENYX (tranne PreRuntime) in post_digests
         let mut moved: Vec<DigestItem> = Vec::new();
 
         block.header.digest_mut().logs.retain(|item| {
-            let is_preruntime = item.as_pre_runtime().map(|(id, _)| id == LUMENYX_ENGINE_ID).unwrap_or(false);
+            // Controlla se è un digest LUMENYX
+            let dominated = item.as_pre_runtime().map(|(id, _)| id == &LUMENYX_ENGINE_ID).unwrap_or(false);
             let is_seal = matches!(item, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID);
             let is_consensus = matches!(item, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID);
             
-            // Keep ONLY PreRuntime in header
-            if is_preruntime {
-                return true;
+            // Mantieni SOLO PreRuntime nell'header
+            if dominated {
+                return true; // PreRuntime resta nell'header
             }
             
-            // Move Seal and Consensus to post_digests
+            // Sposta Seal e Consensus in post_digests
             if is_seal || is_consensus {
                 moved.push(item.clone());
-                return false;
+                return false; // rimuovi dall'header
             }
             
-            // Keep other non-LUMENYX digests
+            // Mantieni altri digest non-LUMENYX
             true
         });
 
-        // Verify at least one Seal exists
+        // Verifica che ci sia almeno un Seal
         let has_seal = moved.iter().any(|d| matches!(d, DigestItem::Seal(_, _)));
         if !has_seal {
             return Err("Missing LUMENYX seal in header digest".into());
         }
 
-        // Clean post_digests and add extracted digests
+        // Pulisci post_digests da eventuali duplicati LUMENYX e aggiungi quelli estratti
         block.post_digests.retain(|d| {
             !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID) &&
             !matches!(d, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID)
@@ -357,22 +368,11 @@ pub fn new_partial(
         client.clone(),
     );
 
-    // ============================================
-    // POW BLOCK IMPORT WRAPPER
-    // ============================================
-    // This wrapper verifies RX-LX PoW before importing blocks
-    // Both local blocks and network blocks go through this
-    let pow_block_import = RxLxPowBlockImport::new(
-        client.clone(),
-        client.clone(),
-    );
-
     let verifier = RxLxVerifier;
 
-    // Use pow_block_import instead of client.clone()
     let import_queue = sc_consensus::BasicQueue::new(
         verifier,
-        Box::new(pow_block_import),
+        Box::new(client.clone()),
         None,
         &task_manager.spawn_essential_handle(),
         config.prometheus_registry(),
@@ -444,9 +444,10 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         50,
         50,
         prometheus_registry.clone(),
-    );
+    ));
 
     let pubsub_notification_sinks: Arc<EthereumBlockNotificationSinks<EthereumBlockNotification<Block>>> = Default::default();
+
 
     // Spawn Frontier EVM mapping sync worker
     match &*frontier_backend {
@@ -470,7 +471,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             );
         }
     }
-
+    // Spawn Frontier EVM mapping sync worker
     // Spawn Frontier fee history task
     task_manager.spawn_essential_handle().spawn(
         "frontier-fee-history",
@@ -576,8 +577,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         );
 
         let mining_client = client.clone();
-        // USE POW_BLOCK_IMPORT instead of client.clone()
-        let block_import = RxLxPowBlockImport::new(client.clone(), client.clone());
+        let block_import = client.clone();
         let select_chain_mining = select_chain.clone();
         let mining_sync_service = sync_service.clone();
         let mining_tx_pool = transaction_pool.clone();
@@ -586,7 +586,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             "pow-miner",
             Some("mining"),
             async move {
-                let mut interval = tokio::time::interval(Duration::from_millis(100));
+                let mut interval = tokio::time::interval(Duration::from_millis(100)); // Check more frequently
                 let mut consecutive_propose_failures: u32 = 0;
                 const MAX_FAILURES_BEFORE_POOL_CLEAR: u32 = 3;
                 let mut last_difficulty: u128 = FALLBACK_DIFFICULTY;
@@ -710,6 +710,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     nonce[0..8].copy_from_slice(&seed.to_le_bytes());
 
                     let mut found = false;
+                    // More iterations for higher difficulty
                     let max_iterations: u64 = 50_000_000;
                     
                     log::info!("⛏️ Mining #{} with difficulty={} target={:?}", parent_number + 1, difficulty, target);
@@ -733,7 +734,6 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                             );
                             import_params.fork_choice = Some(sc_consensus::ForkChoiceStrategy::LongestChain);
 
-                            // Use pow_block_import - same path as network blocks!
                             match block_import.import_block(import_params).await {
                                 Ok(_) => {
                                     log::info!(
