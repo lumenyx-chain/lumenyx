@@ -358,32 +358,3 @@ where
         self.inner.check_block(block).await
     }
 }
-
-// Implement BlockImport for Arc<RxLxPowBlockImport> so it can be used directly
-#[async_trait]
-impl<C, I> BlockImport<Block> for Arc<RxLxPowBlockImport<C, I>>
-where
-    C: HeaderBackend<Block>
-        + StorageProvider<Block, TFullBackend<Block>>
-        + AuxStore
-        + Send
-        + Sync
-        + 'static,
-    I: BlockImport<Block, Error = sp_consensus::Error> + Send + Sync,
-{
-    type Error = sp_consensus::Error;
-
-    async fn import_block(
-        &self,
-        params: BlockImportParams<Block>,
-    ) -> Result<ImportResult, Self::Error> {
-        (**self).import_block(params).await
-    }
-
-    async fn check_block(
-        &self,
-        block: sc_consensus::BlockCheckParams<Block>,
-    ) -> Result<sc_consensus::ImportResult, Self::Error> {
-        (**self).check_block(block).await
-    }
-}
