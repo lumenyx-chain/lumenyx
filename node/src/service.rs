@@ -251,8 +251,8 @@ fn hash_meets_target(hash: &H256, target: &H256) -> bool {
 /// RxLxVerifier - Verifica blocchi PoW e gestisce correttamente il seal
 /// 
 /// Quando un blocco arriva dalla rete, il seal è in header.digest.logs.
-/// Il runtime si aspetta che sia in post_digests. Questo verifier lo sposta.
-/// RxLxVerifier - Verifica blocchi PoW senza duplicare il seal
+/// RxLxVerifier - Strip seal dall'header e mettilo in post_digests
+/// Il runtime si aspetta header SENZA seal, mentre il seal va in post_digests
 pub struct RxLxVerifier;
 
 #[async_trait::async_trait]
@@ -261,24 +261,25 @@ impl Verifier<Block> for RxLxVerifier {
         &self,
         mut block: BlockImportParams<Block>,
     ) -> Result<BlockImportParams<Block>, String> {
-        // Blocchi da rete sono già "sealed" nell'header.digest.
-        // Verifica solo che il seal esista, NON duplicarlo in post_digests
-        let has_seal = block
-            .header
-            .digest()
-            .logs()
-            .iter()
-            .any(|item| matches!(item, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID));
+        // 1) Estrai (e rimuovi) il seal dall'header digest
+        let mut extracted: Option<DigestItem> = None;
 
-        if !has_seal {
-            return Err("Missing LUMENYX seal in header digest".into());
-        }
+        block.header.digest_mut().logs.retain(|item| {
+            let is_seal = matches!(item, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID);
+            if is_seal && extracted.is_none() {
+                extracted = Some(item.clone());
+                return false; // rimuovi dall'header
+            }
+            true
+        });
 
-        // IMPORTANTE: rimuovi eventuali seal duplicati da post_digests
-        // post_digests va usato solo per blocchi minati localmente (BlockOrigin::Own)
+        let seal = extracted.ok_or("Missing LUMENYX seal in header digest")?;
+
+        // 2) Assicurati che in post_digests ci sia esattamente quel seal (no duplicati)
         block.post_digests.retain(|d| {
             !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID)
         });
+        block.post_digests.push(seal);
 
         block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::LongestChain);
         Ok(block)
