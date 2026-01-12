@@ -136,10 +136,15 @@ Everything built on Ethereum can be built on LUMENYX.
 | Parameter | Value |
 |-----------|-------|
 | Fee destination | 100% to miners |
-| Min gas price | 45 planck/gas |
-| Fee model | Fixed (predictable) |
+| Fee model | Dynamic (EIP-1559) |
+| Default base fee | 1,000 planck/gas |
+| Elasticity | ±12.5% per block |
 
-Fees stay low. Even if LUMENYX reaches $1000, a simple transfer costs less than $0.001.
+Fees adjust automatically based on network demand:
+- **Low demand**: Base fee decreases (cheaper transactions)
+- **High demand**: Base fee increases (anti-spam protection)
+
+Competitive with Solana at any LUMENYX price. All fees go to miners - no burning.
 
 ---
 
