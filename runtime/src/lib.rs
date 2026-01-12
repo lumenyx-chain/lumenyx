@@ -342,7 +342,7 @@ pub struct BaseFeeAsGasPrice;
 impl FeeCalculator for BaseFeeAsGasPrice {
     fn min_gas_price() -> (U256, Weight) {
         // Read current base fee from pallet_base_fee (EIP-1559 dynamic)
-        let base = pallet_base_fee::Pallet::<Runtime>::base_fee_per_gas();
+        let base = pallet_base_fee::BaseFeePerGas::<Runtime>::get();
         (base, Weight::zero())
     }
 }
