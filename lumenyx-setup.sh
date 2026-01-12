@@ -17,8 +17,8 @@ NC='\033[0m'
 # Configuration
 LUMENYX_DIR="$HOME/.lumenyx"
 BINARY_NAME="lumenyx-node"
-BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.6.0/lumenyx-node"
-CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.6.0/lumenyx-v1.6.0-sha256.txt"
+BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.7.0/lumenyx-node"
+CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.7.0/lumenyx-v1.7.0-sha256.txt"
 BOOTNODE="/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWS98ZDWN7V71WNV8HQiPMV9bVr9uu1jcToaqK8xL7p7xU"
 GITHUB_REPO="https://github.com/lumenyx-chain/lumenyx.git"
 SERVICE_FILE="/etc/systemd/system/lumenyx.service"
