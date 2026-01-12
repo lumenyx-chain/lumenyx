@@ -38,5 +38,3 @@ Share bootnodes freely. Help others connect. Build the network together.
 The more nodes, the stronger LUMENYX becomes.
 
 ---
-
-**- missed2009**
