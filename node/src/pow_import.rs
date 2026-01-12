@@ -322,10 +322,10 @@ where
 			};
 		}
 
-		let (best_hash, _) = best.ok_or(sp_consensus::Error::StateUnavailable)?;
+		let (best_hash, _) = best.ok_or(sp_consensus::Error::StateUnavailable("no leaves".into()))?;
 		let header = self.client.header(best_hash)
 			.map_err(|_| sp_consensus::Error::ClientImport("header error".into()))?
-			.ok_or(sp_consensus::Error::StateUnavailable)?;
+			.ok_or(sp_consensus::Error::StateUnavailable("header not found".into()))?;
 
 		Ok(header)
 	}
