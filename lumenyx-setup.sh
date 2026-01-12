@@ -204,6 +204,9 @@ step_install() {
     mkdir -p "$LUMENYX_DIR"
     cd "$LUMENYX_DIR"
     
+    # Also remove any binary in home directory
+    rm -f "$HOME/lumenyx-node" 2>/dev/null
+
     # Check if binary already exists
     if [[ -f "$BINARY_NAME" ]]; then
         print_warning "Binary already exists"
