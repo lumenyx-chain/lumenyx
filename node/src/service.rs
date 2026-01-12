@@ -252,6 +252,7 @@ fn hash_meets_target(hash: &H256, target: &H256) -> bool {
 /// 
 /// Quando un blocco arriva dalla rete, il seal è in header.digest.logs.
 /// Il runtime si aspetta che sia in post_digests. Questo verifier lo sposta.
+/// RxLxVerifier - Verifica blocchi PoW senza duplicare il seal
 pub struct RxLxVerifier;
 
 #[async_trait::async_trait]
@@ -260,30 +261,25 @@ impl Verifier<Block> for RxLxVerifier {
         &self,
         mut block: BlockImportParams<Block>,
     ) -> Result<BlockImportParams<Block>, String> {
-        
-        // Cerca il seal LUMENYX nel digest dell'header
-        let header = block.header.clone();
-        
-        for item in header.digest().logs() {
-            if let DigestItem::Seal(id, data) = item {
-                if *id == LUMENYX_ENGINE_ID {
-                    // Blocco dalla rete: sposta il seal in post_digests
-                    let already_in_post = block.post_digests.iter().any(|d| {
-                        matches!(d, DigestItem::Seal(seal_id, _) if *seal_id == LUMENYX_ENGINE_ID)
-                    });
-                    
-                    if !already_in_post {
-                        block.post_digests.push(DigestItem::Seal(*id, data.clone()));
-                        log::debug!(
-                            "🔄 Block #{}: seal moved from header to post_digests",
-                            block.header.number()
-                        );
-                    }
-                    break;
-                }
-            }
+        // Blocchi da rete sono già "sealed" nell'header.digest.
+        // Verifica solo che il seal esista, NON duplicarlo in post_digests
+        let has_seal = block
+            .header
+            .digest()
+            .logs()
+            .iter()
+            .any(|item| matches!(item, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID));
+
+        if !has_seal {
+            return Err("Missing LUMENYX seal in header digest".into());
         }
-        
+
+        // IMPORTANTE: rimuovi eventuali seal duplicati da post_digests
+        // post_digests va usato solo per blocchi minati localmente (BlockOrigin::Own)
+        block.post_digests.retain(|d| {
+            !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID)
+        });
+
         block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::LongestChain);
         Ok(block)
     }
