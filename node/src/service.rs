@@ -27,6 +27,11 @@ use rx_lx::{Flags, Cache, Vm};
 
 use crate::rx_lx::seed as seed_sched;
 
+// PoW BlockImport wrapper with TD tracking
+#[path = "pow_import.rs"]
+mod pow_import;
+use pow_import::{LumenyxPowBlockImport, TotalDifficultySelectChain};
+
 // Frontier imports
 use fc_mapping_sync::{EthereumBlockNotificationSinks, EthereumBlockNotification, SyncStrategy, kv::MappingSyncWorker};
 use fc_rpc::EthTask;
@@ -298,7 +303,7 @@ impl Verifier<Block> for RxLxVerifier {
         });
         block.post_digests.extend(moved);
 
-        block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::LongestChain);
+        // fork_choice is now decided by PowBlockImport based on Total Difficulty
         Ok(block)
     }
 }
@@ -317,6 +322,7 @@ pub fn new_partial(
             Option<Telemetry>,
             Arc<FrontierBackend>,
             FrontierPartialComponents,
+            LumenyxPowBlockImport<FullClient>,
         ),
     >,
     ServiceError,
@@ -370,9 +376,12 @@ pub fn new_partial(
 
     let verifier = RxLxVerifier;
 
+    // PoW+TD block import wrapper (verifies RX-LX PoW before import)
+    let pow_block_import = LumenyxPowBlockImport::new(client.clone());
+
     let import_queue = sc_consensus::BasicQueue::new(
         verifier,
-        Box::new(client.clone()),
+        Box::new(pow_block_import.clone()),
         None,
         &task_manager.spawn_essential_handle(),
         config.prometheus_registry(),
@@ -398,7 +407,7 @@ pub fn new_partial(
         select_chain,
         import_queue,
         transaction_pool,
-        other: (client, telemetry, frontier_backend, frontier_partial),
+        other: (client, telemetry, frontier_backend, frontier_partial, pow_block_import),
     })
 }
 
@@ -411,7 +420,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         select_chain,
         import_queue,
         transaction_pool,
-        other: (_, mut telemetry, frontier_backend, frontier_partial),
+        other: (_, mut telemetry, frontier_backend, frontier_partial, pow_block_import),
     } = new_partial(&config)?;
 
     let net_config = sc_network::config::FullNetworkConfiguration::<Block, <Block as BlockT>::Hash, sc_network::NetworkWorker<Block, <Block as BlockT>::Hash>>::new(&config.network, config.prometheus_registry().cloned());
@@ -577,8 +586,10 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         );
 
         let mining_client = client.clone();
-        let block_import = client.clone();
-        let select_chain_mining = select_chain.clone();
+        // Use PoW+TD wrapper for block import (same as import_queue)
+        let block_import = pow_block_import.clone();
+        // Use TD-based select chain for mining parent selection
+        let select_chain_mining = TotalDifficultySelectChain::new(select_chain.clone(), client.clone());
         let mining_sync_service = sync_service.clone();
         let mining_tx_pool = transaction_pool.clone();
 
@@ -732,7 +743,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                             import_params.state_action = sc_consensus::StateAction::ApplyChanges(
                                 sc_consensus::StorageChanges::Changes(storage_changes)
                             );
-                            import_params.fork_choice = Some(sc_consensus::ForkChoiceStrategy::LongestChain);
+                            // fork_choice is decided by PowBlockImport based on Total Difficulty
 
                             match block_import.import_block(import_params).await {
                                 Ok(_) => {
