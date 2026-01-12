@@ -22,15 +22,14 @@ pub mod pallet {
     use sp_runtime::traits::Saturating;
 
     use lumenyx_primitives::{
+        blocks_until_halving,
         calculate_block_reward,
         current_era,
-        blocks_until_halving,
         TOTAL_SUPPLY,
-        BLOCK_REWARD,
-        BLOCKS_PER_HALVING,
     };
 
-    pub type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+    pub type BalanceOf<T> =
+        <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
     #[pallet::config]
     pub trait Config: frame_system::Config {
@@ -46,10 +45,15 @@ pub mod pallet {
     #[pallet::getter(fn current_halving_era)]
     pub type CurrentHalvingEra<T: Config> = StorageValue<_, u32, ValueQuery>;
 
-    /// Total LUMENYX emitted through mining
+    /// Total LUMENYX emitted through mining (this pallet only)
     #[pallet::storage]
     #[pallet::getter(fn total_emitted)]
     pub type TotalEmitted<T: Config> = StorageValue<_, BalanceOf<T>, ValueQuery>;
+
+    /// True once emission has ended (reward == 0) and EmissionComplete was emitted.
+    #[pallet::storage]
+    #[pallet::getter(fn emission_finished)]
+    pub type EmissionFinished<T: Config> = StorageValue<_, bool, ValueQuery>;
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -66,7 +70,7 @@ pub mod pallet {
             new_reward: BalanceOf<T>,
             at_block: BlockNumberFor<T>,
         },
-        /// All 21M LUMENYX have been mined
+        /// Emission has completed (reward reached 0 or supply cap reached)
         EmissionComplete {
             total_emitted: BalanceOf<T>,
             at_block: BlockNumberFor<T>,
@@ -117,10 +121,26 @@ pub mod pallet {
             let block_number = <frame_system::Pallet<T>>::block_number();
             let block_u32: u32 = block_number.try_into().unwrap_or(u32::MAX);
 
+            // If emission already ended, do nothing (and do not spam events).
+            if Self::emission_finished() {
+                return Ok(());
+            }
+
             // Calculate reward
             let reward = calculate_block_reward(block_u32);
 
-            // Check if we've exceeded total supply
+            // Bitcoin-like stop condition: when reward == 0, emission is finished.
+            if reward == 0 {
+                let total_emitted = Self::total_emitted();
+                Self::deposit_event(Event::EmissionComplete {
+                    total_emitted,
+                    at_block: block_number,
+                });
+                EmissionFinished::<T>::put(true);
+                return Ok(());
+            }
+
+            // Check supply cap (defensive): if already reached, emit once and stop.
             let total_emitted = Self::total_emitted();
             let total_emitted_u128: u128 = total_emitted.try_into().unwrap_or(0);
 
@@ -129,6 +149,7 @@ pub mod pallet {
                     total_emitted,
                     at_block: block_number,
                 });
+                EmissionFinished::<T>::put(true);
                 return Err(Error::<T>::EmissionComplete.into());
             }
 
@@ -164,7 +185,7 @@ pub mod pallet {
         pub fn emission_info() -> (u128, u32, u32) {
             let block_number = <frame_system::Pallet<T>>::block_number();
             let block_u32: u32 = block_number.try_into().unwrap_or(0);
-            
+
             (
                 calculate_block_reward(block_u32),
                 blocks_until_halving(block_u32),
