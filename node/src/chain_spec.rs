@@ -90,6 +90,11 @@ pub fn development_config() -> Result<ChainSpec, String> {
         ],
     ))
     .with_properties(chain_properties())
+    .with_boot_nodes(vec![
+        "/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWC7ceutTSYq5kUD4axsAPBmiXJ6kpCVxL9MA4tKPJPSBa"
+            .parse()
+            .expect("valid bootnode"),
+    ])
     .build())
 }
 
@@ -114,6 +119,11 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
         ],
     ))
     .with_properties(chain_properties())
+    .with_boot_nodes(vec![
+        "/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWC7ceutTSYq5kUD4axsAPBmiXJ6kpCVxL9MA4tKPJPSBa"
+            .parse()
+            .expect("valid bootnode"),
+    ])
     .build())
 }
 
@@ -170,6 +180,11 @@ pub fn mainnet_config() -> Result<ChainSpec, String> {
     .with_chain_type(ChainType::Live)
     .with_genesis_config_patch(mainnet_genesis())
     .with_properties(chain_properties())
+    .with_boot_nodes(vec![
+        "/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWC7ceutTSYq5kUD4axsAPBmiXJ6kpCVxL9MA4tKPJPSBa"
+            .parse()
+            .expect("valid bootnode"),
+    ])
     .build())
 }
 
@@ -184,6 +199,11 @@ pub fn testnet_config() -> Result<ChainSpec, String> {
     .with_chain_type(ChainType::Live)
     .with_genesis_config_patch(mainnet_genesis())
     .with_properties(chain_properties())
+    .with_boot_nodes(vec![
+        "/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWC7ceutTSYq5kUD4axsAPBmiXJ6kpCVxL9MA4tKPJPSBa"
+            .parse()
+            .expect("valid bootnode"),
+    ])
     .build())
 }
 
