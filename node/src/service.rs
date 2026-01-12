@@ -251,8 +251,8 @@ fn hash_meets_target(hash: &H256, target: &H256) -> bool {
 /// RxLxVerifier - Verifica blocchi PoW e gestisce correttamente il seal
 /// 
 /// Quando un blocco arriva dalla rete, il seal è in header.digest.logs.
-/// RxLxVerifier - Strip seal dall'header e mettilo in post_digests
-/// Il runtime si aspetta header SENZA seal, mentre il seal va in post_digests
+/// RxLxVerifier - Strip ALL post-runtime digests from header, move to post_digests
+/// Il runtime si aspetta header con SOLO PreRuntime, tutto il resto va in post_digests
 pub struct RxLxVerifier;
 
 #[async_trait::async_trait]
@@ -261,25 +261,42 @@ impl Verifier<Block> for RxLxVerifier {
         &self,
         mut block: BlockImportParams<Block>,
     ) -> Result<BlockImportParams<Block>, String> {
-        // 1) Estrai (e rimuovi) il seal dall'header digest
-        let mut extracted: Option<DigestItem> = None;
+        // Sposta TUTTI i digest LUMENYX (tranne PreRuntime) in post_digests
+        let mut moved: Vec<DigestItem> = Vec::new();
 
         block.header.digest_mut().logs.retain(|item| {
+            // Controlla se è un digest LUMENYX
+            let dominated = item.as_pre_runtime().map(|(id, _)| id == &LUMENYX_ENGINE_ID).unwrap_or(false);
             let is_seal = matches!(item, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID);
-            if is_seal && extracted.is_none() {
-                extracted = Some(item.clone());
+            let is_consensus = matches!(item, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID);
+            
+            // Mantieni SOLO PreRuntime nell'header
+            if dominated {
+                return true; // PreRuntime resta nell'header
+            }
+            
+            // Sposta Seal e Consensus in post_digests
+            if is_seal || is_consensus {
+                moved.push(item.clone());
                 return false; // rimuovi dall'header
             }
+            
+            // Mantieni altri digest non-LUMENYX
             true
         });
 
-        let seal = extracted.ok_or("Missing LUMENYX seal in header digest")?;
+        // Verifica che ci sia almeno un Seal
+        let has_seal = moved.iter().any(|d| matches!(d, DigestItem::Seal(_, _)));
+        if !has_seal {
+            return Err("Missing LUMENYX seal in header digest".into());
+        }
 
-        // 2) Assicurati che in post_digests ci sia esattamente quel seal (no duplicati)
+        // Pulisci post_digests da eventuali duplicati LUMENYX e aggiungi quelli estratti
         block.post_digests.retain(|d| {
-            !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID)
+            !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID) &&
+            !matches!(d, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID)
         });
-        block.post_digests.push(seal);
+        block.post_digests.extend(moved);
 
         block.fork_choice = Some(sc_consensus::ForkChoiceStrategy::LongestChain);
         Ok(block)
