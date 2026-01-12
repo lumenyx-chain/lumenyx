@@ -266,7 +266,7 @@ impl Verifier<Block> for RxLxVerifier {
 
         block.header.digest_mut().logs.retain(|item| {
             // Controlla se è un digest LUMENYX
-            let dominated = item.as_pre_runtime().map(|(id, _)| id == &LUMENYX_ENGINE_ID).unwrap_or(false);
+            let dominated = item.as_pre_runtime().map(|(id, _)| id == LUMENYX_ENGINE_ID).unwrap_or(false);
             let is_seal = matches!(item, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID);
             let is_consensus = matches!(item, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID);
             
