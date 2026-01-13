@@ -23,6 +23,7 @@ pub mod pallet {
 	};
 	use sp_runtime::traits::Zero;
 	use sp_std::vec::Vec;
+    use pallet_evm::AddressMapping;
 
 	pub type BalanceOf<T> =
 		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
