@@ -100,8 +100,19 @@ step_prechecks() {
         fi
     fi
     
-    # Check existing database
+    # Check existing database (both old and new paths)
+    OLD_DATA_DIR="$HOME/.local/share/lumenyx-node"
+    FOUND_OLD=false
+    FOUND_NEW=false
+    
+    if [[ -d "$OLD_DATA_DIR" ]]; then
+        FOUND_OLD=true
+    fi
     if [[ -d "$DATA_DIR" ]]; then
+        FOUND_NEW=true
+    fi
+    
+    if [[ "$FOUND_OLD" == "true" || "$FOUND_NEW" == "true" ]]; then
         print_warning "Existing LUMENYX database found"
         if ask_yes_no "Delete it and start fresh?"; then
             # === COMPLETE CLEANUP ===
@@ -111,8 +122,9 @@ step_prechecks() {
             rm -f /etc/systemd/system/lumenyx.service
             systemctl daemon-reload 2>/dev/null || true
             rm -rf "$DATA_DIR"
+            rm -rf "$OLD_DATA_DIR"
             rm -rf "$LUMENYX_DIR"
-            rm -f "$HOME/lumenyx-node-linux-x86_64" "$HOME/sha256sum.txt" "$HOME/lumenyx" 2>/dev/null
+            rm -f "$HOME/lumenyx-node-linux-x86_64" "$HOME/sha256sum.txt" "$HOME/lumenyx" "$HOME/lumenyx-node" 2>/dev/null
             print_ok "Complete cleanup done"
         fi
     fi
@@ -467,3 +479,4 @@ main() {
 }
 
 main
+
