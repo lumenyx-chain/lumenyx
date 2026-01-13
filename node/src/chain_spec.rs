@@ -90,11 +90,7 @@ pub fn development_config() -> Result<ChainSpec, String> {
         ],
     ))
     .with_properties(chain_properties())
-    .with_boot_nodes(vec![
-        "/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWRz3czuibWRMthonHp1jbysuJ89duArvkEAYdef7SRJec"
-            .parse()
-            .expect("valid bootnode"),
-    ])
+    .with_boot_nodes(vec![])
     .build())
 }
 
@@ -119,11 +115,7 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
         ],
     ))
     .with_properties(chain_properties())
-    .with_boot_nodes(vec![
-        "/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWRz3czuibWRMthonHp1jbysuJ89duArvkEAYdef7SRJec"
-            .parse()
-            .expect("valid bootnode"),
-    ])
+    .with_boot_nodes(vec![])
     .build())
 }
 
@@ -180,11 +172,7 @@ pub fn mainnet_config() -> Result<ChainSpec, String> {
     .with_chain_type(ChainType::Live)
     .with_genesis_config_patch(mainnet_genesis())
     .with_properties(chain_properties())
-    .with_boot_nodes(vec![
-        "/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWRz3czuibWRMthonHp1jbysuJ89duArvkEAYdef7SRJec"
-            .parse()
-            .expect("valid bootnode"),
-    ])
+    .with_boot_nodes(vec![])
     .build())
 }
 
@@ -199,11 +187,7 @@ pub fn testnet_config() -> Result<ChainSpec, String> {
     .with_chain_type(ChainType::Live)
     .with_genesis_config_patch(mainnet_genesis())
     .with_properties(chain_properties())
-    .with_boot_nodes(vec![
-        "/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWRz3czuibWRMthonHp1jbysuJ89duArvkEAYdef7SRJec"
-            .parse()
-            .expect("valid bootnode"),
-    ])
+    .with_boot_nodes(vec![])
     .build())
 }
 
@@ -218,3 +202,4 @@ fn chain_properties() -> serde_json::Map<String, serde_json::Value> {
     properties.insert("ss58Format".into(), 42.into());
     properties
 }
+
