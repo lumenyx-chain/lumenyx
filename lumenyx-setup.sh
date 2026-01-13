@@ -16,13 +16,13 @@ NC='\033[0m'
 
 # Configuration
 LUMENYX_DIR="$HOME/.lumenyx"
-BINARY_NAME="lumenyx-node"
-BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.7.0/lumenyx-node"
-CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.7.0/lumenyx-v1.7.0-sha256.txt"
+BINARY_NAME="lumenyx-node-linux-x86_64"
+BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.7.0/lumenyx-node-linux-x86_64"
+CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.7.0/lumenyx-node-sha256.txt"
 BOOTNODE="/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWRz3czuibWRMthonHp1jbysuJ89duArvkEAYdef7SRJec"
 GITHUB_REPO="https://github.com/lumenyx-chain/lumenyx.git"
 SERVICE_FILE="/etc/systemd/system/lumenyx.service"
-DATA_DIR="$HOME/.local/share/lumenyx-node"
+DATA_DIR="$HOME/.local/share/lumenyx-node-linux-x86_64"
 
 print_banner() {
     echo -e "${CYAN}"
@@ -87,8 +87,8 @@ step_prechecks() {
     fi
     
     # Check running process
-    if pgrep -x "lumenyx-node" > /dev/null; then
-        PID=$(pgrep -x "lumenyx-node")
+    if pgrep -x "lumenyx-node-linux-x86_64" > /dev/null; then
+        PID=$(pgrep -x "lumenyx-node-linux-x86_64")
         print_warning "LUMENYX is already running (PID: $PID)"
         if ask_yes_no "Stop it before continuing?"; then
             pkill -9 lumenyx-node 2>/dev/null || true
@@ -112,7 +112,7 @@ step_prechecks() {
             systemctl daemon-reload 2>/dev/null || true
             rm -rf "$DATA_DIR"
             rm -rf "$LUMENYX_DIR"
-            rm -f "$HOME/lumenyx-node" "$HOME/sha256sum.txt" "$HOME/lumenyx" 2>/dev/null
+            rm -f "$HOME/lumenyx-node-linux-x86_64" "$HOME/sha256sum.txt" "$HOME/lumenyx" 2>/dev/null
             print_ok "Complete cleanup done"
         fi
     fi
@@ -206,7 +206,7 @@ step_install() {
     cd "$LUMENYX_DIR"
     
     # Also remove any binary in home directory
-    rm -f "$HOME/lumenyx-node" 2>/dev/null
+    rm -f "$HOME/lumenyx-node-linux-x86_64" 2>/dev/null
 
     # Check if binary already exists
     if [[ -f "$BINARY_NAME" ]]; then
