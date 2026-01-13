@@ -20,7 +20,7 @@ BINARY_NAME="lumenyx-node-linux-x86_64"
 BINARY_FINAL="lumenyx-node"
 BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.7.0/lumenyx-node-linux-x86_64"
 CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.7.0/lumenyx-node-sha256.txt"
-BOOTNODE="/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWRz3czuibWRMthonHp1jbysuJ89duArvkEAYdef7SRJec"
+BOOTNODE="/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWSHU7Ntqj5j91EB6xrcr8Sd2X9PunDkohWbHNNui85xHz"
 GITHUB_REPO="https://github.com/lumenyx-chain/lumenyx.git"
 SERVICE_FILE="/etc/systemd/system/lumenyx.service"
 DATA_DIR="$HOME/.local/share/lumenyx-node"
@@ -486,5 +486,6 @@ main() {
 }
 
 main
+
 
 
