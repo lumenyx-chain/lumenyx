@@ -17,12 +17,13 @@ NC='\033[0m'
 # Configuration
 LUMENYX_DIR="$HOME/.lumenyx"
 BINARY_NAME="lumenyx-node-linux-x86_64"
+BINARY_FINAL="lumenyx-node"
 BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.7.0/lumenyx-node-linux-x86_64"
 CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v1.7.0/lumenyx-node-sha256.txt"
 BOOTNODE="/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWRz3czuibWRMthonHp1jbysuJ89duArvkEAYdef7SRJec"
 GITHUB_REPO="https://github.com/lumenyx-chain/lumenyx.git"
 SERVICE_FILE="/etc/systemd/system/lumenyx.service"
-DATA_DIR="$HOME/.local/share/lumenyx-node-linux-x86_64"
+DATA_DIR="$HOME/.local/share/lumenyx-node"
 
 print_banner() {
     echo -e "${CYAN}"
@@ -221,10 +222,10 @@ step_install() {
     rm -f "$HOME/lumenyx-node-linux-x86_64" 2>/dev/null
 
     # Check if binary already exists
-    if [[ -f "$BINARY_NAME" ]]; then
+    if [[ -f "$BINARY_NAME" ]] || [[ -f "$BINARY_FINAL" ]]; then
         print_warning "Binary already exists"
         if ask_yes_no "Re-download?"; then
-            rm -f "$BINARY_NAME"
+            rm -f "$BINARY_NAME" "$BINARY_FINAL"
         else
             print_ok "Using existing binary"
             wait_enter
@@ -255,7 +256,13 @@ step_install() {
     fi
     
     chmod +x "$BINARY_NAME"
-    print_ok "Binary ready: $LUMENYX_DIR/$BINARY_NAME"
+    
+    # Rename to standard name (Substrate uses binary name for data folder)
+    if [[ "$BINARY_NAME" != "$BINARY_FINAL" ]]; then
+        mv "$BINARY_NAME" "$BINARY_FINAL"
+        BINARY_NAME="$BINARY_FINAL"
+    fi
+    print_ok "Binary ready: $LUMENYX_DIR/$BINARY_FINAL"
     wait_enter
 }
 
@@ -479,4 +486,5 @@ main() {
 }
 
 main
+
 
