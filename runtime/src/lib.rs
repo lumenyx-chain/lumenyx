@@ -67,6 +67,7 @@ use pallet_evm::{Precompile,
 
 // Import our primitives
 pub use lumenyx_primitives::{BLOCK_TIME_MS, BLOCKS_PER_DAY, BLOCKS_PER_YEAR};
+use pallet_evm_bridge;
 
 pub type BlockNumber = u32;
 pub type Signature = MultiSignature;
@@ -249,6 +250,17 @@ impl pallet_halving::Config for Runtime {
 
 impl pallet_difficulty::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
+}
+
+// ============================================
+// EVM BRIDGE CONFIGURATION
+// ============================================
+
+impl pallet_evm_bridge::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type Currency = Balances;
+    type AddressMapping = HashedAddressMapping<BlakeTwo256>;
+    type EvmChainId = ChainId;
 }
 
 // ============================================
@@ -463,6 +475,7 @@ construct_runtime!(
         EVM: pallet_evm,
         Ethereum: pallet_ethereum,
         BaseFee: pallet_base_fee,
+        EvmBridge: pallet_evm_bridge,
     }
 );
 
