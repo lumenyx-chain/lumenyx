@@ -63,6 +63,7 @@ lumenyx-primitives = { path = "../primitives", default-features = false }
 pallet-halving = { path = "../pallets/halving", default-features = false }
 pallet-difficulty = { path = "../pallets/difficulty", default-features = false }
 pallet-time-rules = { path = "../pallets/time-rules", default-features = false }
+pallet-evm-bridge = { path = "../pallets/evm-bridge", default-features = false }
 
 [features]
 default = ["std"]
@@ -110,5 +111,6 @@ std = [
     "pallet-halving/std",
     "pallet-difficulty/std",
     "pallet-time-rules/std",
+    "pallet-evm-bridge/std",
     "substrate-wasm-builder",
 ]
