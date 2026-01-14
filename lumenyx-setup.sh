@@ -14,6 +14,9 @@ HELPERS_DIR="$LUMENYX_DIR/helpers"
 KEYS_DIR="$LUMENYX_DIR/keys"
 BINARY_NAME="lumenyx-node"
 SERVICE_NAME="lumenyx"
+DATA_DIR="$HOME/.local/share/lumenyx-node"
+MINER_KEY_FILE="$DATA_DIR/miner-key"
+MINER_KEY_BACKUP="$LUMENYX_DIR/miner-key-backup"
 
 BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-linux-x86_64"
 CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-sha256.txt"
@@ -53,6 +56,36 @@ print_info() { echo -e "${BLUE}ℹ${NC} $1"; }
 press_enter() {
     echo ""
     read -r -p "Press ENTER to continue..."
+}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MINER KEY BACKUP/RESTORE  
+# ══════════════════════════════════════════════════════════════════════════════
+
+backup_miner_key() {
+    if [[ -f "$MINER_KEY_FILE" ]]; then
+        cp "$MINER_KEY_FILE" "$MINER_KEY_BACKUP"
+        return 0
+    fi
+    return 1
+}
+
+restore_miner_key() {
+    if [[ -f "$MINER_KEY_BACKUP" ]]; then
+        mkdir -p "$DATA_DIR"
+        cp "$MINER_KEY_BACKUP" "$MINER_KEY_FILE"
+        return 0
+    fi
+    return 1
+}
+
+reset_chain_data() {
+    backup_miner_key
+    if [[ -d "$DATA_DIR/chains" ]]; then
+        rm -rf "$DATA_DIR/chains"
+    fi
+    restore_miner_key
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1687,6 +1720,7 @@ menu_settings() {
         echo ""
         echo "  [1] Edit bootnodes"
         echo "  [2] View current config"
+        echo "  [3] Reset chain data (keeps wallet)"
         echo "  [0] Back"
         echo ""
         read -p "Choice: " CHOICE
@@ -1706,8 +1740,23 @@ menu_settings() {
                 echo "Binary: $LUMENYX_DIR/$BINARY_NAME"
                 echo "Data:   $DATA_DIR"
                 echo "Keys:   $KEYS_DIR"
-                echo "Logs:   $LOG_FILE"
                 echo ""
+                press_enter
+                ;;
+            3)
+                echo ""
+                print_warn "This will delete all chain data but keep your wallet."
+                read -p "Are you sure? (yes/no): " confirm
+                if [[ "$confirm" == "yes" ]]; then
+                    if is_node_running; then
+                        sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || pkill -f "$BINARY_NAME" || true
+                        sleep 2
+                    fi
+                    reset_chain_data
+                    print_success "Chain data reset! Start mining to resync."
+                else
+                    print_info "Cancelled."
+                fi
                 press_enter
                 ;;
             0) break ;;
