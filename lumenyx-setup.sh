@@ -1,37 +1,24 @@
-#!/bin/bash
-#
-# LUMENYX Setup Script v2.0
-# PoW + EVM + 21M Supply + Fair Launch
-#
-# Features:
-# - First run: Download, wallet generation, systemd setup
-# - Subsequent runs: Full wallet CLI menu
-# - Python helpers for advanced operations
-#
-
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
+# LUMENYX NODE SETUP + WALLET CLI
+# ══════════════════════════════════════════════════════════════════════════════
+# - First run: Download, wallet generation, systemd setup
+# - Subsequent runs: Auto-update check + Full wallet CLI menu
 # ══════════════════════════════════════════════════════════════════════════════
 
 VERSION="1.7.1"
-BINARY_NAME="lumenyx-node"
-BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-linux-x86_64"
-CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-sha256.txt"
-
 LUMENYX_DIR="$HOME/.lumenyx"
 HELPERS_DIR="$LUMENYX_DIR/helpers"
 KEYS_DIR="$LUMENYX_DIR/keys"
-DATA_DIR="$HOME/.local/share/lumenyx-node"
-LOG_FILE="$LUMENYX_DIR/lumenyx.log"
+BINARY_NAME="lumenyx-node"
+SERVICE_NAME="lumenyx"
+
+BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-linux-x86_64"
+CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-sha256.txt"
 
 BOOTNODE="/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWNWLGaBDB9WwCTuG4fDT2rb3AY4WaweF6TBF4YWgZTtrY"
-
-RPC_URL="http://127.0.0.1:9944"
-WS_URL="ws://127.0.0.1:9944"
-CHAIN_ID=7777
-DECIMALS=12
 
 # Colors
 RED='\033[0;31m'
@@ -41,32 +28,138 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# ══════════════════════════════════════════════════════════════════════════════
-# UTILITY FUNCTIONS
-# ══════════════════════════════════════════════════════════════════════════════
-
 print_banner() {
     clear
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════════════════════════╗"
-    echo "║                      L U M E N Y X                                ║"
-    echo "║              PoW + EVM + 21M Supply + Fair Launch                 ║"
+    echo "║                                                                   ║"
+    echo "║     ██╗     ██╗   ██╗███╗   ███╗███████╗███╗   ██╗██╗   ██╗██╗  ║"
+    echo "║     ██║     ██║   ██║████╗ ████║██╔════╝████╗  ██║╚██╗ ██╔╝╚██╗ ║"
+    echo "║     ██║     ██║   ██║██╔████╔██║█████╗  ██╔██╗ ██║ ╚████╔╝  ╚██╗║"
+    echo "║     ██║     ██║   ██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║  ╚██╔╝   ██╔╝║"
+    echo "║     ███████╗╚██████╔╝██║ ╚═╝ ██║███████╗██║ ╚████║   ██║   ██╔╝ ║"
+    echo "║     ╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ║"
+    echo "║                                                                   ║"
+    echo "║                    Peer-to-Peer Electronic Cash                   ║"
+    echo "║                         Version ${VERSION}                            ║"
     echo "╚═══════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
 
 print_success() { echo -e "${GREEN}✓${NC} $1"; }
 print_error() { echo -e "${RED}✗${NC} $1"; }
+print_warn() { echo -e "${YELLOW}!${NC} $1"; }
 print_info() { echo -e "${BLUE}ℹ${NC} $1"; }
-print_warn() { echo -e "${YELLOW}⚠${NC} $1"; }
 
 press_enter() {
     echo ""
-    read -p "Press ENTER to continue..."
+    read -r -p "Press ENTER to continue..."
 }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VERSION CHECK AND AUTO-UPDATE
+# ══════════════════════════════════════════════════════════════════════════════
 
 is_first_run() {
     [[ ! -f "$LUMENYX_DIR/$BINARY_NAME" ]]
+}
+
+is_node_running() {
+    pgrep -f "$BINARY_NAME" > /dev/null 2>&1
+}
+
+get_installed_version() {
+    if [[ -f "$LUMENYX_DIR/$BINARY_NAME" ]]; then
+        # Try to get version from binary
+        local ver
+        ver=$("$LUMENYX_DIR/$BINARY_NAME" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+        echo "$ver"
+    else
+        echo "none"
+    fi
+}
+
+check_for_updates() {
+    local installed_ver
+    installed_ver=$(get_installed_version)
+    
+    if [[ "$installed_ver" == "unknown" || "$installed_ver" == "none" ]]; then
+        return 1  # Can't determine, assume needs update
+    fi
+    
+    if [[ "$installed_ver" != "$VERSION" ]]; then
+        return 1  # Needs update
+    fi
+    
+    return 0  # Up to date
+}
+
+do_update() {
+    print_banner
+    echo -e "${CYAN}═══ AUTO-UPDATE ═══${NC}"
+    echo ""
+    
+    local installed_ver
+    installed_ver=$(get_installed_version)
+    
+    echo "Installed version: $installed_ver"
+    echo "Latest version:    $VERSION"
+    echo ""
+    
+    if [[ "$installed_ver" == "$VERSION" ]]; then
+        print_success "Already up to date!"
+        return 0
+    fi
+    
+    print_info "Downloading update..."
+    
+    # Stop node if running
+    if is_node_running; then
+        print_info "Stopping node..."
+        if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+            sudo systemctl stop "$SERVICE_NAME"
+        else
+            pkill -f "$BINARY_NAME" || true
+        fi
+        sleep 2
+    fi
+    
+    # Download new binary
+    local tmp_binary="/tmp/lumenyx-node-new"
+    if ! curl -L --progress-bar -o "$tmp_binary" "$BINARY_URL"; then
+        print_error "Failed to download update"
+        return 1
+    fi
+    
+    # Verify checksum
+    print_info "Verifying checksum..."
+    local expected_checksum
+    expected_checksum=$(curl -sL "$CHECKSUM_URL" | awk '{print $1}')
+    local actual_checksum
+    actual_checksum=$(sha256sum "$tmp_binary" | awk '{print $1}')
+    
+    if [[ "$expected_checksum" != "$actual_checksum" ]]; then
+        print_error "Checksum mismatch! Update aborted."
+        rm -f "$tmp_binary"
+        return 1
+    fi
+    
+    print_success "Checksum verified!"
+    
+    # Replace binary
+    mv "$tmp_binary" "$LUMENYX_DIR/$BINARY_NAME"
+    chmod +x "$LUMENYX_DIR/$BINARY_NAME"
+    
+    print_success "Updated to version $VERSION!"
+    
+    # Restart node if it was running
+    if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+        print_info "Restarting node..."
+        sudo systemctl start "$SERVICE_NAME"
+        print_success "Node restarted!"
+    fi
+    
+    return 0
 }
 
 is_node_running() {
@@ -1720,6 +1813,20 @@ show_main_menu() {
 # ══════════════════════════════════════════════════════════════════════════════
 
 main() {
+    # Check for updates on every run
+    if [[ -f "$LUMENYX_DIR/$BINARY_NAME" ]]; then
+        if ! check_for_updates; then
+            echo ""
+            print_warn "A new version is available!"
+            echo ""
+            read -r -p "Update to v$VERSION? [Y/n]: " update_choice
+            if [[ ! "$update_choice" =~ ^[Nn] ]]; then
+                do_update
+                press_enter
+            fi
+        fi
+    fi
+
     if is_first_run; then
         do_first_run
     else
