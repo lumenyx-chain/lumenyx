@@ -343,7 +343,7 @@ get_status(){
   addr=$(cat "$KEYS/address.txt" 2>/dev/null || echo "Not set")
   
   if service_active; then
-    status="● MINING"
+    status="MINING"
     local hdr=$(rpc_call chain_getHeader)
     local num=$(echo "$hdr" | grep -oP '"number"\s*:\s*"0x\K[0-9a-fA-F]+' | head -1)
     block="${num:+$((16#$num))}"
@@ -356,15 +356,15 @@ get_status(){
     diff=$(sudo journalctl -u "$SERVICE" -n 30 --no-pager 2>/dev/null | grep -oP 'difficulty=\K[0-9]+' | tail -1)
     diff="${diff:-?}"
   else
-    status="○ STOPPED"
+    status="STOPPED"
     block="?" peers="0" diff="?"
   fi
   
-  echo "addr=$addr"
-  echo "block=$block"
-  echo "peers=$peers"
-  echo "diff=$diff"
-  echo "status=$status"
+  echo "addr='$addr'"
+  echo "block='$block'"
+  echo "peers='$peers'"
+  echo "diff='$diff'"
+  echo "status='$status'"
 }
 
 render_dashboard(){
@@ -374,7 +374,7 @@ render_dashboard(){
   banner
   printf "  Address:  %s\n" "$(shorten "$addr" 12)"
   printf "  Block:    #%s\n" "$block"
-  printf "  Status:   %s (diff: %s)\n" "$status" "$diff"
+  if [[ "$status" == "MINING" ]]; then printf "  Status:   ● %s (diff: %s)\n" "$status" "$diff"; else printf "  Status:   ○ %s\n" "$status"; fi
   printf "  Network:  %s peers\n" "$peers"
   echo "════════════════════════════════════════════════════════════════"
 }
