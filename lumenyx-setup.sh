@@ -15,7 +15,7 @@ set -e
 # CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-VERSION="1.7.0"
+VERSION="1.7.1"
 BINARY_NAME="lumenyx-node"
 BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-linux-x86_64"
 CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-sha256.txt"
