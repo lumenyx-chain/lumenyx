@@ -84,15 +84,38 @@ shorten(){
   echo "${s:0:n}...${s: -n}"
 }
 
+service_active(){ systemctl is-active --quiet "$SERVICE" 2>/dev/null; }
+start_service(){ sudo systemctl restart "$SERVICE"; }
+stop_service(){ sudo systemctl stop "$SERVICE" 2>/dev/null || true; }
+
+# ==============================================================================
+# Recovery: Get address from miner-key if address.txt is missing
+# ==============================================================================
+recover_address_from_minerkey(){
+  if [[ -f "$MINER_KEY_FILE" ]] && [[ ! -f "$KEYS/address.txt" ]]; then
+    if [[ -x "$BIN" ]]; then
+      local seed_hex=$(cat "$MINER_KEY_FILE")
+      local inspect=$("$BIN" key inspect --scheme Sr25519 "0x$seed_hex" 2>&1) || return 1
+      local address=$(echo "$inspect" | grep -E "(SS58|Public key \(SS58\))" | sed 's/.*: *//' | head -1)
+      if [[ -n "$address" ]]; then
+        mkdir -p "$KEYS"
+        echo "$address" > "$KEYS/address.txt"
+        chmod 600 "$KEYS/address.txt"
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
+# ==============================================================================
+# Check what needs to be done
+# ==============================================================================
 first_run_needed(){
   [[ ! -x "$BIN" ]] && return 0
   [[ ! -f "$MINER_KEY_FILE" ]] && return 0
   return 1
 }
-
-service_active(){ systemctl is-active --quiet "$SERVICE" 2>/dev/null; }
-start_service(){ sudo systemctl restart "$SERVICE"; }
-stop_service(){ sudo systemctl stop "$SERVICE" 2>/dev/null || true; }
 
 # ==============================================================================
 # Download & Install
@@ -148,7 +171,7 @@ create_wallet(){
   local output mnemonic address seed_hex
   output=$("$BIN" key generate --scheme Sr25519 --words 12 2>&1) || die "Key generation failed"
   
-  # Parse output - handle different formats
+  # Parse mnemonic from output
   mnemonic=$(echo "$output" | grep -i "phrase" | sed 's/.*: *//' | sed 's/^ *//' | head -1)
   [[ -z "$mnemonic" ]] && mnemonic=$(echo "$output" | tail -n +2 | head -1 | sed 's/^ *//')
   [[ -z "$mnemonic" ]] && die "Failed to generate mnemonic"
@@ -181,11 +204,15 @@ create_wallet(){
   [[ "$confirm" != "YES" ]] && die "Please save your seed phrase first"
 
   # Save miner-key (32 bytes hex, no 0x)
+  mkdir -p "$BASE_PATH"
   echo "$seed_hex" > "$MINER_KEY_FILE"
   chmod 600 "$MINER_KEY_FILE"
   
-  # Save wallet info
+  # Save address
+  mkdir -p "$KEYS"
   echo "$address" > "$KEYS/address.txt"
+  
+  # Save wallet info
   cat > "$WALLET_TXT" <<EOF
 LUMENYX Wallet
 Mining Address: $address
@@ -212,6 +239,7 @@ import_wallet(){
   
   [[ -z "$address" || -z "$seed_hex" ]] && die "Failed to parse seed phrase"
 
+  mkdir -p "$BASE_PATH" "$KEYS"
   echo "$seed_hex" > "$MINER_KEY_FILE"
   chmod 600 "$MINER_KEY_FILE"
   
@@ -338,44 +366,48 @@ EOF
 # Dashboard
 # ==============================================================================
 get_status(){
-  local addr block peers diff status
-  
-  addr=$(cat "$KEYS/address.txt" 2>/dev/null || echo "Not set")
-  
-  if service_active; then
-    status="MINING"
-    local hdr=$(rpc_call chain_getHeader)
-    local num=$(echo "$hdr" | grep -oP '"number"\s*:\s*"0x\K[0-9a-fA-F]+' | head -1)
-    block="${num:+$((16#$num))}"
-    block="${block:-?}"
-    
-    local health=$(rpc_call system_health)
-    peers=$(echo "$health" | grep -oP '"peers"\s*:\s*\K[0-9]+' | head -1)
-    peers="${peers:-0}"
-    
-    diff=$(sudo journalctl -u "$SERVICE" -n 30 --no-pager 2>/dev/null | grep -oP 'difficulty=\K[0-9]+' | tail -1)
-    diff="${diff:-?}"
-  else
-    status="STOPPED"
-    block="?" peers="0" diff="?"
+  # Try to recover address if missing
+  if [[ ! -f "$KEYS/address.txt" ]]; then
+    recover_address_from_minerkey 2>/dev/null || true
   fi
   
-  echo "addr='$addr'"
-  echo "block='$block'"
-  echo "peers='$peers'"
-  echo "diff='$diff'"
-  echo "status='$status'"
+  if [[ -f "$KEYS/address.txt" ]]; then
+    G_ADDR=$(cat "$KEYS/address.txt")
+  else
+    G_ADDR="Not set"
+  fi
+  
+  if service_active; then
+    G_STATUS="MINING"
+    local hdr=$(rpc_call chain_getHeader)
+    local num=$(echo "$hdr" | grep -oP '"number"\s*:\s*"0x\K[0-9a-fA-F]+' | head -1)
+    G_BLOCK="${num:+$((16#$num))}"
+    G_BLOCK="${G_BLOCK:-?}"
+    
+    local health=$(rpc_call system_health)
+    G_PEERS=$(echo "$health" | grep -oP '"peers"\s*:\s*\K[0-9]+' | head -1)
+    G_PEERS="${G_PEERS:-0}"
+    
+    G_DIFF=$(sudo journalctl -u "$SERVICE" -n 30 --no-pager 2>/dev/null | grep -oP 'difficulty=\K[0-9]+' | tail -1)
+    G_DIFF="${G_DIFF:-?}"
+  else
+    G_STATUS="STOPPED"
+    G_BLOCK="?" G_PEERS="0" G_DIFF="?"
+  fi
 }
 
 render_dashboard(){
-  local addr block peers diff status
-  eval "$(get_status)"
+  get_status
   
   banner
-  printf "  Address:  %s\n" "$(shorten "$addr" 12)"
-  printf "  Block:    #%s\n" "$block"
-  if [[ "$status" == "MINING" ]]; then printf "  Status:   ● %s (diff: %s)\n" "$status" "$diff"; else printf "  Status:   ○ %s\n" "$status"; fi
-  printf "  Network:  %s peers\n" "$peers"
+  printf "  Address:  %s\n" "$(shorten "$G_ADDR" 12)"
+  printf "  Block:    #%s\n" "$G_BLOCK"
+  if [[ "$G_STATUS" == "MINING" ]]; then
+    printf "  Status:   ${GREEN}● MINING${NC} (diff: %s)\n" "$G_DIFF"
+  else
+    printf "  Status:   ${RED}○ STOPPED${NC}\n"
+  fi
+  printf "  Network:  %s peers\n" "$G_PEERS"
   echo "════════════════════════════════════════════════════════════════"
 }
 
@@ -500,7 +532,15 @@ main_menu(){
 # ==============================================================================
 main(){
   ensure_dirs
-  first_run_needed && first_run || main_menu
+  
+  # Try to recover address if miner-key exists but address.txt doesn't
+  recover_address_from_minerkey 2>/dev/null || true
+  
+  if first_run_needed; then
+    first_run
+  else
+    main_menu
+  fi
 }
 
 main "$@"
