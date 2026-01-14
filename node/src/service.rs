@@ -97,7 +97,8 @@ where
             }
         }
         Ok(None) => {
-            log::debug!("No difficulty in storage yet, using fallback");
+            log::error!("❌ CRITICAL: Difficulty storage key NOT FOUND at block {:?}! This usually means storage prefix mismatch or corrupted state.", at);
+            log::warn!("⚠️ No difficulty in storage yet (block {:?}), using fallback: {}", at, FALLBACK_DIFFICULTY);
             FALLBACK_DIFFICULTY
         }
         Err(e) => {
