@@ -1721,6 +1721,7 @@ menu_settings() {
         echo "  [1] Edit bootnodes"
         echo "  [2] View current config"
         echo "  [3] Reset chain data (keeps wallet)"
+        echo "  [4] Full reset (NEW wallet)"
         echo "  [0] Back"
         echo ""
         read -p "Choice: " CHOICE
@@ -1754,6 +1755,27 @@ menu_settings() {
                     fi
                     reset_chain_data
                     print_success "Chain data reset! Start mining to resync."
+                else
+                    print_info "Cancelled."
+                fi
+                press_enter
+                ;;
+            4)
+                echo ""
+                print_error "WARNING: This will DELETE your wallet and ALL data!"
+                print_error "You will get a NEW wallet address."
+                echo ""
+                read -p "Type 'DELETE' to confirm: " confirm
+                if [[ "$confirm" == "DELETE" ]]; then
+                    if is_node_running; then
+                        sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || pkill -f "$BINARY_NAME" || true
+                        sleep 2
+                    fi
+                    rm -rf "$DATA_DIR"
+                    rm -f "$MINER_KEY_BACKUP"
+                    rm -f "$LUMENYX_DIR/wallet.txt"
+                    rm -rf "$KEYS_DIR"/*
+                    print_success "Full reset complete! Run script again for new wallet."
                 else
                     print_info "Cancelled."
                 fi
