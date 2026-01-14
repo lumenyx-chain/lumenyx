@@ -11,8 +11,8 @@
 //!
 //! ## Parameters for LUMENYX:
 //! - Target block time: 2.5 seconds (2500ms)
-//! - Halflife: 720 seconds (12 minutes)
-//! - Initial difficulty: 25,000,000
+//! - Halflife: 60 seconds (1 minute)
+//! - Initial difficulty: 1
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -85,15 +85,16 @@ pub mod pallet {
     // STORAGE
     // ============================================
 
+    /// Flag to track if pallet has been initialized (prevents re-genesis)
+    #[pallet::storage]
+    #[pallet::getter(fn initialized)]
+    pub type Initialized<T: Config> = StorageValue<_, bool, ValueQuery>;
+
     /// Current mining difficulty (read by miner for next block)
+    /// CHANGED: OptionQuery instead of ValueQuery to detect missing storage
     #[pallet::storage]
     #[pallet::getter(fn current_difficulty)]
-    pub type CurrentDifficulty<T: Config> = StorageValue<_, u128, ValueQuery, InitialDifficultyValue>;
-
-    #[pallet::type_value]
-    pub fn InitialDifficultyValue() -> u128 {
-        INITIAL_DIFFICULTY
-    }
+    pub type CurrentDifficulty<T: Config> = StorageValue<_, u128, OptionQuery>;
 
     /// Last effective timestamp (ms) - used for deterministic time series
     #[pallet::storage]
@@ -119,8 +120,16 @@ pub mod pallet {
     #[pallet::genesis_build]
     impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
         fn build(&self) {
-            <CurrentDifficulty<T>>::put(self.initial_difficulty);
-            log::info!("🎯 Genesis difficulty set to: {}", self.initial_difficulty);
+            // CRITICAL FIX: Only initialize if not already initialized
+            if !Initialized::<T>::get() {
+                CurrentDifficulty::<T>::put(self.initial_difficulty);
+                LastEffectiveTimeMs::<T>::put(0);
+                Anchor::<T>::kill(); // Ensure clean state
+                Initialized::<T>::put(true);
+                log::info!("🎯 Difficulty initialized at genesis: {}", self.initial_difficulty);
+            } else {
+                log::info!("✅ Difficulty already initialized, skipping genesis init");
+            }
         }
     }
 
@@ -176,14 +185,26 @@ pub mod pallet {
             let eff_now_ms = prev_eff_ms.saturating_add(solve_ms);
             LastEffectiveTimeMs::<T>::put(eff_now_ms);
 
-            // 3) Set anchor if not exists (first block)
+            // 3) Get current difficulty with explicit None handling
+            let old_difficulty = match CurrentDifficulty::<T>::get() {
+                Some(d) => d,
+                None => {
+                    log::warn!("⚠️ CurrentDifficulty storage missing! Initializing to {}", INITIAL_DIFFICULTY);
+                    CurrentDifficulty::<T>::put(INITIAL_DIFFICULTY);
+                    Initialized::<T>::put(true);
+                    INITIAL_DIFFICULTY
+                }
+            };
+
+            // 4) Set anchor if not exists (first block or after missing storage)
             let anchor = match Anchor::<T>::get() {
                 Some(a) => a,
                 None => {
+                    let cur = CurrentDifficulty::<T>::get().unwrap_or(INITIAL_DIFFICULTY);
                     let a = AnchorInfo {
                         anchor_height: block_number,
                         anchor_parent_time_ms: now_ms.saturating_sub(TARGET_BLOCK_TIME_MS),
-                        anchor_difficulty: CurrentDifficulty::<T>::get(),
+                        anchor_difficulty: cur,
                     };
                     Anchor::<T>::put(&a);
                     Self::deposit_event(Event::AnchorSet {
@@ -201,14 +222,13 @@ pub mod pallet {
                 }
             };
 
-            // 4) Calculate next difficulty using ASERT
-            let old_difficulty = CurrentDifficulty::<T>::get();
+            // 5) Calculate next difficulty using ASERT
             let new_difficulty = Self::calculate_asert_difficulty(&anchor, block_number, eff_now_ms);
 
-            // 5) Update storage
+            // 6) Update storage
             CurrentDifficulty::<T>::put(new_difficulty);
 
-            // 6) Emit event and log
+            // 7) Emit event and log
             Self::deposit_event(Event::DifficultyUpdated {
                 block_number,
                 old_difficulty,
@@ -216,19 +236,21 @@ pub mod pallet {
             });
 
             // Log significant changes (more than 1%)
-            let change_percent = if new_difficulty > old_difficulty {
-                ((new_difficulty - old_difficulty) * 100) / old_difficulty
-            } else {
-                ((old_difficulty - new_difficulty) * 100) / old_difficulty
-            };
+            if old_difficulty > 0 {
+                let change_percent = if new_difficulty > old_difficulty {
+                    ((new_difficulty - old_difficulty) * 100) / old_difficulty
+                } else {
+                    ((old_difficulty - new_difficulty) * 100) / old_difficulty
+                };
 
-            if change_percent > 0 {
-                log::info!(
-                    "⚡ Difficulty: {} -> {} ({}% change)",
-                    old_difficulty,
-                    new_difficulty,
-                    if new_difficulty > old_difficulty { "+" } else { "-" }
-                );
+                if change_percent > 0 {
+                    log::info!(
+                        "⚡ Difficulty: {} -> {} ({}% change)",
+                        old_difficulty,
+                        new_difficulty,
+                        if new_difficulty > old_difficulty { "+" } else { "-" }
+                    );
+                }
             }
         }
     }
@@ -367,8 +389,9 @@ pub mod pallet {
         }
 
         /// Get current difficulty (for RPC/node)
+        /// Returns INITIAL_DIFFICULTY if not set (instead of panicking)
         pub fn get_difficulty() -> u128 {
-            Self::current_difficulty()
+            Self::current_difficulty().unwrap_or(INITIAL_DIFFICULTY)
         }
     }
 }
