@@ -89,6 +89,45 @@ start_service(){ sudo systemctl restart "$SERVICE"; }
 stop_service(){ sudo systemctl stop "$SERVICE" 2>/dev/null || true; }
 
 # ==============================================================================
+# ALWAYS ensure bootnode is configured
+# ==============================================================================
+ensure_bootnode(){
+  sudo mkdir -p "$ETC_DIR"
+  
+  # Create bootnodes.txt if missing
+  if [[ ! -f "$BOOTFILE" ]]; then
+    echo "$OFFICIAL_BOOTNODE" | sudo tee "$BOOTFILE" >/dev/null
+  fi
+  
+  # Verify bootnode is in file
+  if ! grep -q "12D3KooWNWLGaBDB9WwCTuG4fDT2rb3AY4WaweF6TBF4YWgZTtrY" "$BOOTFILE" 2>/dev/null; then
+    echo "$OFFICIAL_BOOTNODE" | sudo tee "$BOOTFILE" >/dev/null
+  fi
+}
+
+# ==============================================================================
+# Check bootnode connectivity
+# ==============================================================================
+check_bootnode(){
+  local ip="89.147.111.102"
+  local port="30333"
+  
+  if timeout 3 bash -c "echo >/dev/tcp/$ip/$port" 2>/dev/null; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# ==============================================================================
+# Get genesis hash to verify chain compatibility
+# ==============================================================================
+get_genesis(){
+  local resp=$(rpc_call chain_getBlockHash '["0"]')
+  echo "$resp" | grep -oP '"result"\s*:\s*"\K[^"]+' | head -1
+}
+
+# ==============================================================================
 # Recovery: Get address from miner-key if address.txt is missing
 # ==============================================================================
 recover_address_from_minerkey(){
@@ -135,6 +174,16 @@ check_requirements(){
   
   local ram=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null)
   ok "RAM: ${ram:-?}MB"
+  
+  # Check bootnode connectivity
+  echo ""
+  echo "  Checking bootnode connectivity..."
+  if check_bootnode; then
+    ok "Bootnode reachable (89.147.111.102:30333)"
+  else
+    warn "Bootnode not reachable - check firewall"
+  fi
+  
   pause
 }
 
@@ -258,10 +307,7 @@ EOF
 # Systemd Service
 # ==============================================================================
 install_systemd(){
-  sudo mkdir -p "$ETC_DIR"
-  
-  # Bootnodes file
-  [[ ! -f "$BOOTFILE" ]] && echo "$OFFICIAL_BOOTNODE" | sudo tee "$BOOTFILE" >/dev/null
+  ensure_bootnode
   
   # Environment file
   [[ ! -f "$ENVFILE" ]] && sudo tee "$ENVFILE" >/dev/null <<EOF
@@ -390,9 +436,18 @@ get_status(){
     
     G_DIFF=$(sudo journalctl -u "$SERVICE" -n 30 --no-pager 2>/dev/null | grep -oP 'difficulty=\K[0-9]+' | tail -1)
     G_DIFF="${G_DIFF:-?}"
+    
+    G_GENESIS=$(get_genesis)
   else
     G_STATUS="STOPPED"
-    G_BLOCK="?" G_PEERS="0" G_DIFF="?"
+    G_BLOCK="?" G_PEERS="0" G_DIFF="?" G_GENESIS=""
+  fi
+  
+  # Check bootnode connectivity
+  if check_bootnode; then
+    G_BOOTNODE="OK"
+  else
+    G_BOOTNODE="UNREACHABLE"
   fi
 }
 
@@ -407,7 +462,16 @@ render_dashboard(){
   else
     printf "  Status:   ${RED}○ STOPPED${NC}\n"
   fi
-  printf "  Network:  %s peers\n" "$G_PEERS"
+  printf "  Network:  %s peers" "$G_PEERS"
+  if [[ "$G_PEERS" == "0" ]]; then
+    if [[ "$G_BOOTNODE" == "OK" ]]; then
+      echo -e " ${YELLOW}(bootnode OK but no peers - chain mismatch?)${NC}"
+    else
+      echo -e " ${RED}(bootnode unreachable!)${NC}"
+    fi
+  else
+    echo ""
+  fi
   echo "════════════════════════════════════════════════════════════════"
 }
 
@@ -465,6 +529,33 @@ menu_wallet(){
 menu_network(){
   render_dashboard
   echo ""
+  echo "  === Network Diagnostics ==="
+  echo ""
+  
+  # Bootnode status
+  echo -n "  Bootnode (89.147.111.102:30333): "
+  if check_bootnode; then
+    echo -e "${GREEN}REACHABLE${NC}"
+  else
+    echo -e "${RED}UNREACHABLE${NC}"
+  fi
+  
+  # Genesis hash
+  local genesis=$(get_genesis)
+  echo "  Genesis hash: ${genesis:-unknown}"
+  echo ""
+  
+  # Configured bootnodes
+  echo "  Configured bootnodes:"
+  if [[ -f "$BOOTFILE" ]]; then
+    cat "$BOOTFILE" | while read line; do
+      [[ -n "$line" && ! "$line" =~ ^# ]] && echo "    $line"
+    done
+  else
+    echo -e "    ${RED}No bootnode file!${NC}"
+  fi
+  echo ""
+  
   echo "  system_health:"
   rpc_call system_health | python3 -m json.tool 2>/dev/null || rpc_call system_health
   echo ""
@@ -480,6 +571,7 @@ menu_settings(){
     echo "  [3] Reset chain (keep wallet)"
     echo "  [4] Full reset (NEW wallet)"
     echo "  [5] Update binary"
+    echo "  [6] Fix bootnode config"
     echo "  [0] Back"
     echo ""
     read -r -p "Choice: " c
@@ -498,6 +590,14 @@ menu_settings(){
         pause ;;
       5)
         ask_yes_no "Update to v$VERSION?" && { stop_service; download_binary; install_systemd; start_service; ok "Updated"; }
+        pause ;;
+      6)
+        banner
+        echo "  Fixing bootnode configuration..."
+        ensure_bootnode
+        install_systemd
+        start_service
+        ok "Bootnode configured and node restarted"
         pause ;;
       0) return ;;
     esac
@@ -532,6 +632,9 @@ main_menu(){
 # ==============================================================================
 main(){
   ensure_dirs
+  
+  # ALWAYS ensure bootnode is configured
+  ensure_bootnode
   
   # Try to recover address if miner-key exists but address.txt doesn't
   recover_address_from_minerkey 2>/dev/null || true
