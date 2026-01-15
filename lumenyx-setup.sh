@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.22"
+SCRIPT_VERSION="1.9.23"
 
 # Colors
 RED='\033[0;31m'
@@ -345,7 +345,7 @@ def read_address():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ws", required=True)
-    ap.add_argument("--blocks", type=int, default=200)
+    ap.add_argument("--blocks", type=int, default=0)
     ap.add_argument("--decimals", type=int, default=12)
     args = ap.parse_args()
 
@@ -373,32 +373,35 @@ def main():
         transactions = []
         start_block = 1 if args.blocks == 0 else max(1, current_block - args.blocks)
         
-        for block_num in range(current_block, start_block, -1):
+        for block_num in range(current_block, start_block - 1, -1):
             try:
                 block_hash = substrate.get_block_hash(block_num)
                 events = substrate.get_events(block_hash)
                 
                 for event in events:
-                    if event.value['event_id'] == 'Transfer' and event.value['module_id'] == 'Balances':
-                        attrs = event.value['attributes']
-                        from_addr = attrs.get('from', attrs[0]) if isinstance(attrs, dict) else attrs[0]
-                        to_addr = attrs.get('to', attrs[1]) if isinstance(attrs, dict) else attrs[1]
-                        amount = attrs.get('amount', attrs[2]) if isinstance(attrs, dict) else attrs[2]
+                    if event.value.get('event_id') == 'Transfer' and event.value.get('module_id') == 'Balances':
+                        attrs = event.value.get('attributes', {})
+                        if isinstance(attrs, dict):
+                            from_addr = str(attrs.get('from', ''))
+                            to_addr = str(attrs.get('to', ''))
+                            amount = int(attrs.get('amount', 0))
+                        else:
+                            continue
                         
-                        if str(from_addr) == addr or str(to_addr) == addr:
-                            tx_type = "SENT" if str(from_addr) == addr else "RECV"
-                            human_amount = int(amount) / (10 ** args.decimals)
+                        if from_addr == addr or to_addr == addr:
+                            tx_type = "SENT" if from_addr == addr else "RECV"
+                            human_amount = amount / (10 ** args.decimals)
                             transactions.append({
                                 "block": block_num,
                                 "type": tx_type,
                                 "amount": human_amount,
-                                "from": str(from_addr)[:8] + "..." + str(from_addr)[-6:],
-                                "to": str(to_addr)[:8] + "..." + str(to_addr)[-6:]
+                                "from": from_addr[:8] + "..." + from_addr[-6:],
+                                "to": to_addr[:8] + "..." + to_addr[-6:]
                             })
-            except:
+            except Exception:
                 continue
                 
-            if len(transactions) >= 15:
+            if len(transactions) >= 20:
                 break
         
         print(json.dumps({"ok": True, "transactions": transactions}))
