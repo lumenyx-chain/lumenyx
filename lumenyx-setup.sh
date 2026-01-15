@@ -147,8 +147,19 @@ get_balance() {
         return
     fi
     
-    # Simplified - real balance needs proper RPC
-    echo "?"
+    # Count blocks mined from log to estimate balance
+    # Initial reward ~0.208 LMX per block
+    if [[ -f "$LOG_FILE" ]]; then
+        local blocks_mined=$(grep -c "mined!" "$LOG_FILE" 2>/dev/null || echo "0")
+        if [[ "$blocks_mined" -gt 0 ]]; then
+            # Use awk for calculation (bc might not be installed)
+            local balance=$(awk "BEGIN {printf \"%.3f\", $blocks_mined * 0.208}")
+            echo "$balance"
+            return
+        fi
+    fi
+    
+    echo "0.000"
 }
 
 get_block() {
@@ -652,4 +663,5 @@ main() {
 }
 
 main "$@"
+
 
