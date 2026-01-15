@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.3"
+SCRIPT_VERSION="1.9.4"
 
 # Colors
 RED='\033[0;31m'
@@ -68,7 +68,7 @@ check_for_updates() {
                 echo ""
                 print_info "Restarting script..."
                 sleep 1
-                exec "$script_path" "$@"
+                exec "$script_path" --updated
             else
                 print_error "Update failed - continuing with current version"
                 rm -f "${script_path}.new"
@@ -929,8 +929,12 @@ main() {
     # Check for script updates first
     check_for_updates
     
-    # ALWAYS check for existing data or running processes first
-    if has_existing_data; then
+    # Skip clean install prompt if we just updated (--updated flag)
+    if [[ "$1" == "--updated" ]]; then
+        print_ok "Script updated successfully!"
+        sleep 1
+    elif has_existing_data; then
+        # ALWAYS check for existing data or running processes first
         prompt_clean_install || true  # Continue even if user says no
     fi
     
@@ -944,6 +948,7 @@ main() {
 }
 
 main "$@"
+
 
 
 
