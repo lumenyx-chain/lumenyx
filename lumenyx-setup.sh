@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.21"
+SCRIPT_VERSION="1.9.22"
 
 # Colors
 RED='\033[0;31m'
@@ -371,7 +371,7 @@ def main():
         current_block = head['header']['number']
         
         transactions = []
-        start_block = max(1, current_block - args.blocks)
+        start_block = 1 if args.blocks == 0 else max(1, current_block - args.blocks)
         
         for block_num in range(current_block, start_block, -1):
             try:
@@ -1159,7 +1159,7 @@ menu_tx_history() {
     print_info "Scanning recent blocks for transactions..."
     
     local out
-    out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 1000 --decimals 12 2>&1 || true)
+    out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 0 --decimals 12 2>&1 || true)
     
     if echo "$out" | grep -q '"ok": true'; then
         echo "$out" | python3 -c 'import sys,json
