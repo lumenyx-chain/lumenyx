@@ -1,0 +1,5 @@
+# LUMENYX Bootnodes
+# Add bootnode addresses below (one per line)
+# Format: /ip4/IP/tcp/30333/p2p/PEER_ID
+#
+# This file is empty until official launch
