@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.9"
+SCRIPT_VERSION="1.9.10"
 
 # Colors
 RED='\033[0;31m'
@@ -897,13 +897,11 @@ dashboard_loop() {
         echo "  [6] 🛠️  Useful Commands"
         echo "  [0] 🚪 Exit"
         echo ""
-        echo -e "  ${CYAN}Auto-refresh in 10s - Press a key to select${NC}"
+        echo -e "  ${CYAN}Auto-refresh in 10s - Enter choice + ENTER${NC}"
         echo ""
 
-        read -r -t 10 -n 1 choice || choice="refresh"
+        read -r -t 10 choice || choice="refresh"
         
-        # Clear input buffer
-        read -r -t 0.1 -n 10000 discard 2>/dev/null || true
 
         case $choice in
             1) echo ""; menu_start_stop ;;
