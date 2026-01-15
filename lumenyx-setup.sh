@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v1.9.5 - Simple & Clean (No root required)
+# LUMENYX SETUP SCRIPT v1.9.6 - Simple & Clean (No root required)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.5"
+SCRIPT_VERSION="1.9.6"
 
 # Colors
 RED='\033[0;31m'
@@ -286,7 +286,8 @@ get_bootnodes() {
     local bootnodes=$(curl -sL "$BOOTNODES_URL" 2>/dev/null | grep -v '^#' | grep -v '^$' | tr '\n' ' ')
     
     if [[ -z "$bootnodes" ]]; then
-        print_warning "No bootnodes found in repository."
+        # Warning to stderr so it doesn't get captured
+        echo -e "${YELLOW}!${NC} No bootnodes found in repository." >&2
         echo ""
         read -r -p "Enter bootnode manually (or ENTER to skip): " manual
         if [[ -n "$manual" ]]; then
