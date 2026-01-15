@@ -249,7 +249,7 @@ get_bootnodes() {
 }
 
 has_existing_data() {
-    [[ -d "$LUMENYX_DIR" ]] || [[ -d "$DATA_DIR" ]]
+    [[ -d "$LUMENYX_DIR" ]] || [[ -d "$DATA_DIR" ]] || pgrep -f "lumenyx-node" > /dev/null 2>&1
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -263,10 +263,11 @@ prompt_clean_install() {
     echo -e "${YELLOW}║                  EXISTING DATA DETECTED                            ║${NC}"
     echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  Found existing LUMENYX data on this machine:"
+    echo "  Found existing LUMENYX on this machine:"
     echo ""
     [[ -d "$LUMENYX_DIR" ]] && echo -e "    ${CYAN}•${NC} $LUMENYX_DIR (binary, config, logs)"
     [[ -d "$DATA_DIR" ]] && echo -e "    ${CYAN}•${NC} $DATA_DIR (blockchain data, wallet)"
+    pgrep -f "lumenyx-node" > /dev/null 2>&1 && echo -e "    ${RED}•${NC} lumenyx-node process is RUNNING"
     echo ""
     echo -e "  ${GREEN}RECOMMENDED:${NC} Clean install for best experience"
     echo ""
@@ -857,8 +858,8 @@ menu_commands() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 main() {
-    # Check for existing data on first run
-    if is_first_run && has_existing_data; then
+    # ALWAYS check for existing data or running processes first
+    if has_existing_data; then
         prompt_clean_install
     fi
     
@@ -872,5 +873,6 @@ main() {
 }
 
 main "$@"
+
 
 
