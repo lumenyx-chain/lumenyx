@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.2"
+SCRIPT_VERSION="1.9.3"
 
 # Colors
 RED='\033[0;31m'
@@ -721,7 +721,7 @@ print_dashboard() {
     print_logo
     echo ""
     echo -e "  Wallet:   ${GREEN}$short_addr${NC}"
-    echo -e "  Balance:  ${GREEN}$balance LMX${NC}"
+    echo -e "  Balance:  ${GREEN}$balance LUMENYX${NC}"
     echo -e "  Block:    #$block"
     echo -e "  Status:   ${status_color} ${status}${NC}"
     echo -e "  Peers:    $peers"
@@ -834,7 +834,7 @@ menu_send() {
     
     echo ""
     echo "  To: $recipient"
-    echo "  Amount: $amount LMX"
+    echo "  Amount: $amount LUMENYX"
     echo ""
     
     if ask_yes_no "Confirm transaction?"; then
@@ -944,6 +944,7 @@ main() {
 }
 
 main "$@"
+
 
 
 
