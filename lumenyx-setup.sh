@@ -906,12 +906,12 @@ dashboard_loop() {
         read -r -t 0.1 -n 10000 discard 2>/dev/null || true
 
         case $choice in
-            1) echo ""; menu_start_stop ;;
-            2) echo ""; menu_send ;;
-            3) echo ""; menu_receive ;;
-            4) echo ""; menu_history ;;
-            5) echo ""; menu_logs ;;
-            6) echo ""; menu_commands ;;
+            1) echo ""; echo "Loading..."; menu_start_stop ;;
+            2) echo ""; echo "Loading..."; menu_send ;;
+            3) echo ""; echo "Loading..."; menu_receive ;;
+            4) echo ""; echo "Loading..."; menu_history ;;
+            5) echo ""; echo "Loading..."; menu_logs ;;
+            6) echo ""; echo "Loading..."; menu_commands ;;
             0) echo ""; echo "Goodbye!"; exit 0 ;;
             refresh) ;;
             *) ;;
