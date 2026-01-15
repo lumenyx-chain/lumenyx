@@ -1162,21 +1162,17 @@ menu_tx_history() {
     out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 200 --decimals 12 2>&1 || true)
     
     if echo "$out" | grep -q '"ok": true'; then
-        echo "$out" | python3 -c '
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    txs = d.get("transactions", [])
-    if not txs:
-        print("  No transactions found in recent blocks")
-    else:
-        for tx in txs:
-            icon = "SENT" if tx["type"] == "SENT" else "RECV"
-            sym = "[OUT]" if tx["type"] == "SENT" else "[IN] "
-            print(f"  {sym} Block #{tx[\"block\"]} | {tx[\"amount\"]:>12.3f} LUMENYX")
-except Exception as e:
-    print(f"  Error: {e}")
-'
+        echo "$out" | python3 -c 'import sys, json
+d = json.load(sys.stdin)
+txs = d.get("transactions", [])
+if not txs:
+    print("  No transactions found in recent blocks")
+else:
+    for tx in txs:
+        sym = "[OUT]" if tx["type"] == "SENT" else "[IN] "
+        blk = tx["block"]
+        amt = tx["amount"]
+        print("  %s Block #%d | %12.3f LUMENYX" % (sym, blk, amt))'
     else
         print_warning "Could not fetch transactions"
         echo "  Debug: $out"
