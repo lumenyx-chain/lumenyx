@@ -664,6 +664,7 @@ dashboard_loop() {
         echo "  [3] 📥 Receive (show address)"
         echo "  [4] 📜 History"
         echo "  [5] 📊 Live Logs"
+        echo "  [6] 🛠️  Useful Commands"
         echo "  [0] 🚪 Exit"
         echo ""
         echo -e "  ${CYAN}Auto-refresh in 10s - Press a key to select${NC}"
@@ -692,6 +693,10 @@ dashboard_loop() {
             5) 
                 echo ""
                 menu_logs 
+                ;;
+            6) 
+                echo ""
+                menu_commands 
                 ;;
             0) 
                 echo ""
@@ -815,6 +820,31 @@ menu_logs() {
     fi
 }
 
+
+menu_commands() {
+    clear
+    print_logo
+    echo ""
+    echo -e "${CYAN}═══ USEFUL COMMANDS ═══${NC}"
+    echo ""
+    echo -e "  ${YELLOW}🧹 CLEAN INSTALL (reset everything):${NC}"
+    echo "     rm -rf ~/.lumenyx ~/.local/share/lumenyx*"
+    echo ""
+    echo -e "  ${YELLOW}📋 VIEW FULL LOGS:${NC}"
+    echo "     tail -100 ~/.lumenyx/lumenyx.log"
+    echo ""
+    echo -e "  ${YELLOW}🔍 FIND YOUR PEER ID:${NC}"
+    echo '     grep "Local node identity" ~/.lumenyx/lumenyx.log'
+    echo ""
+    echo -e "  ${YELLOW}🔄 UPDATE SCRIPT:${NC}"
+    echo "     curl -O https://raw.githubusercontent.com/lumenyx-chain/lumenyx/main/lumenyx-setup.sh"
+    echo ""
+    echo -e "  ${YELLOW}🌐 POLKADOT.JS EXPLORER:${NC}"
+    echo "     https://polkadot.js.org/apps/?rpc=ws://YOUR_IP:9944"
+    echo ""
+    wait_enter
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -835,3 +865,4 @@ main() {
 }
 
 main "$@"
+
