@@ -33,6 +33,7 @@ RPC_RETRIES=3
 HELPERS_DIR="$LUMENYX_DIR/helpers"
 SUBSTRATE_SEND_PY="$HELPERS_DIR/substrate_send.py"
 SUBSTRATE_DASH_PY="$HELPERS_DIR/substrate_dashboard.py"
+SUBSTRATE_TX_PY="$HELPERS_DIR/substrate_tx.py"
 
 # Download URLs
 BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-linux-x86_64"
@@ -323,6 +324,93 @@ if __name__ == "__main__":
     main()
 PY
     chmod +x "$SUBSTRATE_DASH_PY"
+
+    # TX HISTORY helper
+    cat > "$SUBSTRATE_TX_PY" <<'PY'
+#!/usr/bin/env python3
+import argparse, json, os, sys
+
+WALLET_FILE = os.path.expanduser("~/.lumenyx/wallet.txt")
+
+def read_address():
+    if os.path.exists(WALLET_FILE):
+        for line in open(WALLET_FILE, "r"):
+            line = line.strip()
+            if line.startswith("Address:"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    return parts[1].strip()
+    return None
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ws", required=True)
+    ap.add_argument("--blocks", type=int, default=200)
+    ap.add_argument("--decimals", type=int, default=12)
+    args = ap.parse_args()
+
+    try:
+        from substrateinterface import SubstrateInterface
+    except Exception:
+        print(json.dumps({"ok": False, "error": "Missing substrate-interface"}))
+        sys.exit(2)
+
+    addr = read_address()
+    if not addr:
+        print(json.dumps({"ok": False, "error": "No wallet address found"}))
+        sys.exit(1)
+
+    try:
+        substrate = SubstrateInterface(url=args.ws)
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": "Connect failed: " + str(e)}))
+        sys.exit(1)
+
+    try:
+        head = substrate.get_block()
+        current_block = head['header']['number']
+        
+        transactions = []
+        start_block = max(1, current_block - args.blocks)
+        
+        for block_num in range(current_block, start_block, -1):
+            try:
+                block_hash = substrate.get_block_hash(block_num)
+                events = substrate.get_events(block_hash)
+                
+                for event in events:
+                    if event.value['event_id'] == 'Transfer' and event.value['module_id'] == 'Balances':
+                        attrs = event.value['attributes']
+                        from_addr = attrs.get('from', attrs[0]) if isinstance(attrs, dict) else attrs[0]
+                        to_addr = attrs.get('to', attrs[1]) if isinstance(attrs, dict) else attrs[1]
+                        amount = attrs.get('amount', attrs[2]) if isinstance(attrs, dict) else attrs[2]
+                        
+                        if str(from_addr) == addr or str(to_addr) == addr:
+                            tx_type = "SENT" if str(from_addr) == addr else "RECV"
+                            human_amount = int(amount) / (10 ** args.decimals)
+                            transactions.append({
+                                "block": block_num,
+                                "type": tx_type,
+                                "amount": human_amount,
+                                "from": str(from_addr)[:8] + "..." + str(from_addr)[-6:],
+                                "to": str(to_addr)[:8] + "..." + str(to_addr)[-6:]
+                            })
+            except:
+                continue
+                
+            if len(transactions) >= 15:
+                break
+        
+        print(json.dumps({"ok": True, "transactions": transactions}))
+        
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+PY
+    chmod +x "$SUBSTRATE_TX_PY"
 }
 
 ensure_python_deps() {
@@ -892,9 +980,10 @@ dashboard_loop() {
         echo "  [1] ⛏️  Start/Stop Mining"
         echo "  [2] 💸 Send LUMENYX"
         echo "  [3] 📥 Receive (show address)"
-        echo "  [4] 📜 Mining History"
+        echo "  [4] 📜 History"
         echo "  [5] 📊 Live Logs"
-        echo "  [6] 🛠️  Useful Commands"
+        echo "  [6] 💰 Transaction History"
+        echo "  [7] 🛠️  Useful Commands"
         echo "  [0] 🚪 Exit"
         echo ""
         echo -e "  ${CYAN}Auto-refresh in 10s - Press a key to select${NC}"
@@ -911,7 +1000,8 @@ dashboard_loop() {
             3) echo ""; echo "Loading..."; menu_receive ;;
             4) echo ""; echo "Loading..."; menu_history ;;
             5) echo ""; echo "Loading..."; menu_logs ;;
-            6) echo ""; echo "Loading..."; menu_commands ;;
+            6) echo ""; echo "Loading..."; menu_tx_history ;;
+            7) echo ""; echo "Loading..."; menu_commands ;;
             0) echo ""; echo "Goodbye!"; exit 0 ;;
             refresh) ;;
             *) ;;
@@ -1032,7 +1122,7 @@ menu_history() {
     fi
     print_dashboard
     echo ""
-    echo -e "${CYAN}═══ MINING HISTORY (blocks mined) ═══${NC}"
+    echo -e "${CYAN}═══ MINING HISTORY ═══${NC}"
     echo ""
 
     if [[ -f "$LOG_FILE" ]]; then
@@ -1041,6 +1131,54 @@ menu_history() {
         grep -E "✅ Block.*mined|🏆 Imported" "$LOG_FILE" 2>/dev/null | tail -15 || echo "  No recent activity"
     else
         print_warning "No log file found"
+    fi
+
+    wait_enter
+}
+
+menu_tx_history() {
+    echo ""
+    if ! ask_yes_no "Show transaction history?"; then
+        return
+    fi
+    
+    print_dashboard
+    echo ""
+    echo -e "${CYAN}═══ TRANSACTION HISTORY (sent/received) ═══${NC}"
+    echo ""
+
+    if ! node_running; then
+        print_error "Node must be running"
+        wait_enter
+        return
+    fi
+
+    ensure_helpers
+    ensure_python_deps >/dev/null || { print_error "Python deps missing"; wait_enter; return; }
+
+    print_info "Scanning recent blocks for transactions..."
+    
+    local out ok
+    out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 200 --decimals 12 2>/dev/null || true)
+    ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
+
+    if [[ "$ok" == "true" ]]; then
+        local txs
+        txs=$(echo "$out" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+txs = d.get("transactions", [])
+if not txs:
+    print("  No transactions found in recent blocks")
+else:
+    for tx in txs:
+        direction = "📤" if tx["type"] == "SENT" else "📥"
+        print(f"  {direction} Block #{tx[\"block\"]} | {tx[\"type\"]:4} | {tx[\"amount\"]:>12.3f} LUMENYX")
+' 2>/dev/null)
+        echo "$txs"
+    else
+        print_warning "Could not fetch transactions"
+        echo "  (Try again or check node connection)"
     fi
 
     wait_enter
