@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.9"
+SCRIPT_VERSION="1.9.20"
 
 # Colors
 RED='\033[0;31m'
@@ -469,7 +469,7 @@ get_balance() {
 
     local out ok free
     out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode balance --decimals 12 2>/dev/null || true)
-    ok=$(echo "$out" | grep -o '"ok":[^,]*' | cut -d':' -f2 | tr -d ' }')
+    ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
 
     if [[ "$ok" == "true" ]]; then
         free=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("{:.3f}".format(d.get("free",0)))' 2>/dev/null || echo "")
@@ -493,7 +493,7 @@ get_block() {
 
     local out ok best
     out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode block 2>/dev/null || true)
-    ok=$(echo "$out" | grep -o '"ok":[^,]*' | cut -d':' -f2 | tr -d ' }')
+    ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
     if [[ "$ok" == "true" ]]; then
         best=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("best",""))' 2>/dev/null || true)
         [[ -n "$best" ]] && { echo "$best"; return; }
@@ -512,7 +512,7 @@ get_peers() {
 
     local out ok peers
     out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode peers 2>/dev/null || true)
-    ok=$(echo "$out" | grep -o '"ok":[^,]*' | cut -d':' -f2 | tr -d ' }')
+    ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
     if [[ "$ok" == "true" ]]; then
         peers=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("peers",0))' 2>/dev/null || echo "0")
         echo "${peers:-0}"
@@ -1074,7 +1074,7 @@ menu_send() {
         print_info "Signing & submitting extrinsic..."
         local out ok hash err
         out=$(python3 "$SUBSTRATE_SEND_PY" --ws "$WS" --to "$recipient" --amount "$amount" --decimals 12 --wait inclusion 2>/dev/null || true)
-        ok=$(echo "$out" | grep -o '"ok":[^,]*' | cut -d':' -f2 | tr -d ' }')
+        ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
         hash=$(echo "$out" | grep -o '"hash":"[^"]*"' | cut -d'"' -f4)
         err=$(echo "$out" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)
 
@@ -1162,20 +1162,17 @@ menu_tx_history() {
     out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 200 --decimals 12 2>&1 || true)
     
     if echo "$out" | grep -q '"ok": true'; then
-        echo "$out" | python3 -c 'import sys, json
-d = json.load(sys.stdin)
-txs = d.get("transactions", [])
+        echo "$out" | python3 -c 'import sys,json
+d=json.load(sys.stdin)
+txs=d.get("transactions",[])
 if not txs:
     print("  No transactions found in recent blocks")
 else:
     for tx in txs:
-        sym = "[OUT]" if tx["type"] == "SENT" else "[IN] "
-        blk = tx["block"]
-        amt = tx["amount"]
-        print("  %s Block #%d | %12.3f LUMENYX" % (sym, blk, amt))'
+        sym="[OUT]" if tx["type"]=="SENT" else "[IN] "
+        print("  %s Block #%d | %12.3f LUMENYX" % (sym,tx["block"],tx["amount"]))'
     else
         print_warning "Could not fetch transactions"
-        echo "  Debug: $out"
     fi
 
     wait_enter
