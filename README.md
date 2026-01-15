@@ -22,12 +22,7 @@ A purely peer-to-peer version of electronic cash with fixed supply and smart con
 
 **One command to start:**
 ```bash
-curl -O https://raw.githubusercontent.com/lumenyx-chain/lumenyx/main/lumenyx-setup.sh && chmod +x lumenyx-setup.sh && ./lumenyx-setup.sh
-```
-
-**If download fails or you get old version:**
-```bash
-curl -s -H "Accept: application/vnd.github.v3.raw" "https://api.github.com/repos/lumenyx-chain/lumenyx/contents/lumenyx-setup.sh" -o lumenyx-setup.sh && chmod +x lumenyx-setup.sh && ./lumenyx-setup.sh
+curl -sL "https://api.github.com/repos/lumenyx-chain/lumenyx/contents/lumenyx-setup.sh" -H "Accept: application/vnd.github.v3.raw" -o lumenyx-setup.sh && chmod +x lumenyx-setup.sh && ./lumenyx-setup.sh
 ```
 
 The script will:
