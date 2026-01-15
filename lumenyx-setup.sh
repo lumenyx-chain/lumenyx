@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.24"
+SCRIPT_VERSION="1.9.25"
 
 # Colors
 RED='\033[0;31m'
@@ -1099,7 +1099,7 @@ menu_send() {
         local out ok hash err
         out=$(python3 "$SUBSTRATE_SEND_PY" --ws "$WS" --to "$recipient" --amount "$amount" --decimals 12 --wait inclusion 2>/dev/null || true)
         ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
-        hash=$(echo "$out" | grep -o '"hash":"[^"]*"' | cut -d'"' -f4)
+        hash=$(echo "$out" | grep -o '"hash": *"[^"]*"' | cut -d'"' -f4)
         err=$(echo "$out" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)
 
         if [[ "$ok" == "true" ]] && [[ -n "$hash" ]]; then
