@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.0"
+SCRIPT_VERSION="1.9.1"
 
 # Colors
 RED='\033[0;31m'
@@ -298,7 +298,7 @@ get_bootnodes() {
 }
 
 has_existing_data() {
-    [[ -d "$LUMENYX_DIR" ]] || [[ -d "$DATA_DIR" ]] || pgrep -f "lumenyx-node" > /dev/null 2>&1
+    [[ -d "$LUMENYX_DIR" ]] || [[ -d "$DATA_DIR" ]] || pgrep -f "lumenyx-node" > /dev/null 2>&1 || systemctl is-active --quiet lumenyx 2>/dev/null
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -317,6 +317,7 @@ prompt_clean_install() {
     [[ -d "$LUMENYX_DIR" ]] && echo -e "    ${CYAN}•${NC} $LUMENYX_DIR (binary, config, logs)"
     [[ -d "$DATA_DIR" ]] && echo -e "    ${CYAN}•${NC} $DATA_DIR (blockchain data, wallet)"
     pgrep -f "lumenyx-node" > /dev/null 2>&1 && echo -e "    ${RED}•${NC} lumenyx-node process is RUNNING"
+    systemctl is-active --quiet lumenyx 2>/dev/null && echo -e "    ${RED}•${NC} systemd service is ACTIVE"
     echo ""
     echo -e "  ${GREEN}RECOMMENDED:${NC} Clean install for best experience"
     echo ""
@@ -327,15 +328,33 @@ prompt_clean_install() {
     if ask_yes_no "Perform clean install?"; then
         print_info "Cleaning existing data..."
         
-        # Stop node if running
-        if node_running; then
+        # Stop systemd service if exists (this prevents auto-restart)
+        if systemctl is-active --quiet lumenyx 2>/dev/null; then
+            print_info "Stopping systemd service..."
+            systemctl stop lumenyx 2>/dev/null || true
+            systemctl disable lumenyx 2>/dev/null || true
+            rm -f /etc/systemd/system/lumenyx.service 2>/dev/null || true
+            systemctl daemon-reload 2>/dev/null || true
+            sleep 1
+        fi
+        
+        # Stop node if still running
+        if pgrep -f "lumenyx-node" > /dev/null 2>&1; then
             print_info "Stopping running node..."
-            if [[ -f "$PID_FILE" ]]; then
-                local pid=$(cat "$PID_FILE")
-                kill "$pid" 2>/dev/null
-            fi
-            pkill -f "lumenyx-node" 2>/dev/null || true
+            pkill -TERM -f "lumenyx-node" 2>/dev/null || true
             sleep 2
+            pkill -KILL -f "lumenyx-node" 2>/dev/null || true
+            sleep 1
+        fi
+        
+        # Remove PID file
+        rm -f "$PID_FILE" 2>/dev/null
+        
+        # Verify node is stopped
+        if pgrep -f "lumenyx-node" > /dev/null 2>&1; then
+            print_error "Could not stop node. Please run: pkill -9 -f lumenyx-node"
+            wait_enter
+            return 1
         fi
         
         rm -rf "$LUMENYX_DIR" "$DATA_DIR"
@@ -925,6 +944,7 @@ main() {
 }
 
 main "$@"
+
 
 
 
