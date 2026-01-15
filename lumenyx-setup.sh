@@ -458,8 +458,8 @@ start_node() {
         --chain mainnet \
         --validator \
         --rpc-cors all \
-        --rpc-external \
-        --rpc-methods Safe \
+        --unsafe-rpc-external \
+        --rpc-methods Unsafe \
         $bootnode_args \
         >> "$LOG_FILE" 2>&1 &
     
@@ -652,3 +652,4 @@ main() {
 }
 
 main "$@"
+
