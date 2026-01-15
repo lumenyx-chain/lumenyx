@@ -381,7 +381,7 @@ get_balance() {
 
     local out ok free
     out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode balance --decimals 12 2>/dev/null || true)
-    ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
+    ok=$(echo "$out" | grep -o '"ok":[^,]*' | cut -d':' -f2 | tr -d ' }')
 
     if [[ "$ok" == "true" ]]; then
         free=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("{:.3f}".format(d.get("free",0)))' 2>/dev/null || echo "")
@@ -405,7 +405,7 @@ get_block() {
 
     local out ok best
     out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode block 2>/dev/null || true)
-    ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
+    ok=$(echo "$out" | grep -o '"ok":[^,]*' | cut -d':' -f2 | tr -d ' }')
     if [[ "$ok" == "true" ]]; then
         best=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("best",""))' 2>/dev/null || true)
         [[ -n "$best" ]] && { echo "$best"; return; }
@@ -424,7 +424,7 @@ get_peers() {
 
     local out ok peers
     out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode peers 2>/dev/null || true)
-    ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
+    ok=$(echo "$out" | grep -o '"ok":[^,]*' | cut -d':' -f2 | tr -d ' }')
     if [[ "$ok" == "true" ]]; then
         peers=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("peers",0))' 2>/dev/null || echo "0")
         echo "${peers:-0}"
@@ -892,7 +892,7 @@ dashboard_loop() {
         echo "  [1] ⛏️  Start/Stop Mining"
         echo "  [2] 💸 Send LUMENYX"
         echo "  [3] 📥 Receive (show address)"
-        echo "  [4] 📜 History"
+        echo "  [4] 📜 Mining History"
         echo "  [5] 📊 Live Logs"
         echo "  [6] 🛠️  Useful Commands"
         echo "  [0] 🚪 Exit"
@@ -984,7 +984,7 @@ menu_send() {
         print_info "Signing & submitting extrinsic..."
         local out ok hash err
         out=$(python3 "$SUBSTRATE_SEND_PY" --ws "$WS" --to "$recipient" --amount "$amount" --decimals 12 --wait inclusion 2>/dev/null || true)
-        ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
+        ok=$(echo "$out" | grep -o '"ok":[^,]*' | cut -d':' -f2 | tr -d ' }')
         hash=$(echo "$out" | grep -o '"hash":"[^"]*"' | cut -d'"' -f4)
         err=$(echo "$out" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)
 
@@ -1032,7 +1032,7 @@ menu_history() {
     fi
     print_dashboard
     echo ""
-    echo -e "${CYAN}═══ MINING HISTORY ═══${NC}"
+    echo -e "${CYAN}═══ MINING HISTORY (blocks mined) ═══${NC}"
     echo ""
 
     if [[ -f "$LOG_FILE" ]]; then
