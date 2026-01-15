@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT - Simple & Clean
+# LUMENYX SETUP SCRIPT - Simple & Clean (No root required)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
@@ -19,7 +19,8 @@ NC='\033[0m'
 LUMENYX_DIR="$HOME/.lumenyx"
 BINARY_NAME="lumenyx-node"
 DATA_DIR="$HOME/.local/share/lumenyx-node"
-SERVICE_FILE="/etc/systemd/system/lumenyx.service"
+PID_FILE="$LUMENYX_DIR/lumenyx.pid"
+LOG_FILE="$LUMENYX_DIR/lumenyx.log"
 RPC="http://127.0.0.1:9944"
 
 # Download URLs
@@ -45,7 +46,6 @@ print_banner() {
     echo "║                                                                    ║"
     echo "║                Welcome to LUMENYX - Your Chain                     ║"
     echo "║                                                                    ║"
-    echo "║      Fresh install? Run: rm -rf ~/.lumenyx ~/.local/share/lumenyx* ║"
     echo "╚════════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
@@ -65,7 +65,7 @@ print_dashboard() {
     local status="STOPPED"
     local status_color="${RED}○"
     
-    if service_running; then
+    if node_running; then
         status="MINING"
         status_color="${GREEN}●"
     fi
@@ -118,15 +118,21 @@ ask_yes_no() {
 # UTILITY FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-service_running() {
-    systemctl is-active --quiet lumenyx 2>/dev/null
+node_running() {
+    if [[ -f "$PID_FILE" ]]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    # Also check by process name
+    pgrep -f "lumenyx-node.*--validator" > /dev/null 2>&1
 }
 
 get_address() {
     if [[ -f "$LUMENYX_DIR/wallet.txt" ]]; then
         grep "Address:" "$LUMENYX_DIR/wallet.txt" 2>/dev/null | awk '{print $2}'
     elif [[ -f "$DATA_DIR/miner-key" ]]; then
-        # Recover from miner-key
         local seed=$(cat "$DATA_DIR/miner-key" 2>/dev/null)
         if [[ -n "$seed" ]] && [[ -f "$LUMENYX_DIR/$BINARY_NAME" ]]; then
             "$LUMENYX_DIR/$BINARY_NAME" key inspect "0x$seed" 2>/dev/null | grep "SS58" | awk '{print $3}'
@@ -136,21 +142,17 @@ get_address() {
 
 get_balance() {
     local addr=$(get_address)
-    if [[ -z "$addr" ]] || ! service_running; then
+    if [[ -z "$addr" ]] || ! node_running; then
         echo "?"
         return
     fi
     
-    local result=$(curl -s -m 3 -H "Content-Type: application/json" \
-        -d "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"state_getStorage\",\"params\":[\"0x\"]}" \
-        "$RPC" 2>/dev/null)
-    
-    # Simplified - just show ? for now, real balance needs proper RPC
+    # Simplified - real balance needs proper RPC
     echo "?"
 }
 
 get_block() {
-    if ! service_running; then
+    if ! node_running; then
         echo "?"
         return
     fi
@@ -168,7 +170,7 @@ get_block() {
 }
 
 get_peers() {
-    if ! service_running; then
+    if ! node_running; then
         echo "0"
         return
     fi
@@ -182,7 +184,7 @@ get_peers() {
 }
 
 get_bootnodes() {
-    local bootnodes=$(curl -sL "$BOOTNODES_URL" 2>/dev/null | grep -v '^#' | grep -v '^$' | head -5)
+    local bootnodes=$(curl -sL "$BOOTNODES_URL" 2>/dev/null | grep -v '^#' | grep -v '^$' | tr '\n' ' ')
     
     if [[ -z "$bootnodes" ]]; then
         print_warning "No bootnodes found in repository."
@@ -382,9 +384,9 @@ step_wallet() {
     wait_enter
 }
 
-step_setup() {
+step_start() {
     echo ""
-    echo -e "${CYAN}═══ STEP 4: SETUP ═══${NC}"
+    echo -e "${CYAN}═══ STEP 4: START MINING ═══${NC}"
     echo ""
     
     # Get bootnodes
@@ -392,49 +394,16 @@ step_setup() {
     BOOTNODES=$(get_bootnodes)
     
     if [[ -z "$BOOTNODES" ]]; then
-        print_warning "No bootnodes configured - node will run in solo mode"
+        print_warning "No bootnodes - node will wait for connections"
     else
         print_ok "Bootnodes configured"
     fi
     
-    # Create systemd service
     echo ""
-    if ask_yes_no "Install as system service (auto-start on boot)?"; then
-        local bootnode_args=""
-        if [[ -n "$BOOTNODES" ]]; then
-            bootnode_args="--bootnodes $BOOTNODES"
-        fi
-        
-        sudo tee "$SERVICE_FILE" > /dev/null << SVCEOF
-[Unit]
-Description=LUMENYX Node
-After=network.target
-
-[Service]
-Type=simple
-User=$USER
-ExecStart=$LUMENYX_DIR/$BINARY_NAME --chain mainnet --validator --rpc-cors all --rpc-external --rpc-methods Safe $bootnode_args
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-        
-        sudo systemctl daemon-reload
-        sudo systemctl enable lumenyx
-        print_ok "Service installed"
-        
-        echo ""
-        if ask_yes_no "Start mining now?"; then
-            sudo systemctl start lumenyx
-            sleep 3
-            if service_running; then
-                print_ok "Mining started!"
-            else
-                print_error "Failed to start - check: journalctl -u lumenyx -f"
-            fi
-        fi
+    if ask_yes_no "Start mining now?"; then
+        start_node
+    else
+        print_info "You can start mining later from the menu"
     fi
     
     wait_enter
@@ -449,12 +418,14 @@ first_run() {
     echo "    3. Create your wallet"
     echo "    4. Start mining"
     echo ""
+    echo "  No root/sudo required!"
+    echo ""
     wait_enter
     
     step_system_check
     step_install
     step_wallet
-    step_setup
+    step_start
     
     echo ""
     print_ok "Setup complete! Entering wallet menu..."
@@ -462,24 +433,87 @@ first_run() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# NODE CONTROL (No sudo!)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+start_node() {
+    if node_running; then
+        print_warning "Node is already running"
+        return
+    fi
+    
+    # Build bootnode args
+    local bootnode_args=""
+    local bootnodes=$(curl -sL "$BOOTNODES_URL" 2>/dev/null | grep -v '^#' | grep -v '^$' | tr '\n' ' ')
+    if [[ -n "$bootnodes" ]]; then
+        for bn in $bootnodes; do
+            bootnode_args="$bootnode_args --bootnodes $bn"
+        done
+    fi
+    
+    print_info "Starting node..."
+    
+    # Start in background with nohup
+    nohup "$LUMENYX_DIR/$BINARY_NAME" \
+        --chain mainnet \
+        --validator \
+        --rpc-cors all \
+        --rpc-external \
+        --rpc-methods Safe \
+        $bootnode_args \
+        >> "$LOG_FILE" 2>&1 &
+    
+    echo $! > "$PID_FILE"
+    
+    sleep 3
+    
+    if node_running; then
+        print_ok "Mining started! (PID: $(cat $PID_FILE))"
+    else
+        print_error "Failed to start - check: tail -50 $LOG_FILE"
+    fi
+}
+
+stop_node() {
+    if ! node_running; then
+        print_warning "Node is not running"
+        return
+    fi
+    
+    print_info "Stopping node..."
+    
+    if [[ -f "$PID_FILE" ]]; then
+        local pid=$(cat "$PID_FILE")
+        kill "$pid" 2>/dev/null
+        rm -f "$PID_FILE"
+    fi
+    
+    # Also kill by name if pid file was stale
+    pkill -f "lumenyx-node.*--validator" 2>/dev/null
+    
+    sleep 2
+    
+    if ! node_running; then
+        print_ok "Node stopped"
+    else
+        print_warning "Force killing..."
+        pkill -9 -f "lumenyx-node" 2>/dev/null
+        rm -f "$PID_FILE"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN MENU
 # ═══════════════════════════════════════════════════════════════════════════════
 
 menu_start_stop() {
-    if service_running; then
+    if node_running; then
         if ask_yes_no "Mining is running. Stop it?"; then
-            sudo systemctl stop lumenyx
-            print_ok "Mining stopped"
+            stop_node
         fi
     else
         if ask_yes_no "Start mining?"; then
-            sudo systemctl start lumenyx
-            sleep 3
-            if service_running; then
-                print_ok "Mining started!"
-            else
-                print_error "Failed to start"
-            fi
+            start_node
         fi
     fi
     wait_enter
@@ -491,7 +525,7 @@ menu_send() {
     echo -e "${CYAN}═══ SEND LUMENYX ═══${NC}"
     echo ""
     
-    if ! service_running; then
+    if ! node_running; then
         print_error "Node must be running to send transactions"
         wait_enter
         return
@@ -518,9 +552,6 @@ menu_send() {
     
     if ask_yes_no "Confirm transaction?"; then
         print_info "Sending transaction..."
-        
-        # Use author_submitExtrinsic via RPC
-        # This is simplified - real implementation needs proper signing
         print_warning "Send feature coming soon - use polkadot.js for now"
     fi
     
@@ -553,19 +584,20 @@ menu_history() {
     echo -e "${CYAN}═══ TRANSACTION HISTORY ═══${NC}"
     echo ""
     
-    if ! service_running; then
+    if ! node_running; then
         print_warning "Node must be running to fetch history"
         wait_enter
         return
     fi
     
-    print_info "Fetching recent blocks..."
+    print_info "Recent mining activity:"
+    echo ""
     
-    # Show recent mining rewards from logs
-    echo ""
-    echo "  Recent mining activity:"
-    echo ""
-    sudo journalctl -u lumenyx --no-pager -n 20 2>/dev/null | grep -E "Imported|mined" | tail -10 || echo "  No recent activity"
+    if [[ -f "$LOG_FILE" ]]; then
+        grep -E "Imported|mined|Prepared" "$LOG_FILE" | tail -15 || echo "  No recent activity"
+    else
+        echo "  No log file found"
+    fi
     
     wait_enter
 }
@@ -574,7 +606,13 @@ menu_logs() {
     echo ""
     print_info "Showing live logs (Ctrl+C to exit)..."
     echo ""
-    sudo journalctl -u lumenyx -f --no-hostname -n 50
+    
+    if [[ -f "$LOG_FILE" ]]; then
+        tail -f "$LOG_FILE"
+    else
+        print_error "No log file found. Start mining first."
+        wait_enter
+    fi
 }
 
 main_menu() {
