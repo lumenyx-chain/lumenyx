@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.23"
+SCRIPT_VERSION="1.9.24"
 
 # Colors
 RED='\033[0;31m'
@@ -46,6 +46,27 @@ BOOTNODES_URL="https://raw.githubusercontent.com/lumenyx-chain/lumenyx/main/boot
 
 REMOTE_VERSION_URL="https://raw.githubusercontent.com/lumenyx-chain/lumenyx/main/lumenyx-setup.sh"
 
+# Version comparison: returns 0 if $1 > $2
+version_gt() {
+    local v1="$1" v2="$2"
+    # Split by dots
+    local IFS='.'
+    read -ra V1 <<< "$v1"
+    read -ra V2 <<< "$v2"
+    
+    local i
+    for ((i=0; i<${#V1[@]} || i<${#V2[@]}; i++)); do
+        local n1="${V1[i]:-0}"
+        local n2="${V2[i]:-0}"
+        if ((n1 > n2)); then
+            return 0
+        elif ((n1 < n2)); then
+            return 1
+        fi
+    done
+    return 1  # Equal, not greater
+}
+
 check_for_updates() {
     local remote_version
     remote_version=$(curl -sL --connect-timeout 5 "$REMOTE_VERSION_URL" 2>/dev/null | grep '^SCRIPT_VERSION=' | cut -d'"' -f2)
@@ -54,7 +75,7 @@ check_for_updates() {
         return 0
     fi
 
-    if [[ "$remote_version" != "$SCRIPT_VERSION" ]]; then
+    if version_gt "$remote_version" "$SCRIPT_VERSION"; then
         clear
         print_logo
         echo -e "${YELLOW}╔════════════════════════════════════════════════════════════════════╗${NC}"
