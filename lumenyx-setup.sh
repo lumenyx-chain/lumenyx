@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.1"
+SCRIPT_VERSION="1.9.2"
 
 # Colors
 RED='\033[0;31m'
@@ -931,7 +931,7 @@ main() {
     
     # ALWAYS check for existing data or running processes first
     if has_existing_data; then
-        prompt_clean_install
+        prompt_clean_install || true  # Continue even if user says no
     fi
     
     # Run first-time setup if needed
@@ -944,6 +944,7 @@ main() {
 }
 
 main "$@"
+
 
 
 
