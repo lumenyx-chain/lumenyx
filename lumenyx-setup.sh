@@ -598,22 +598,29 @@ stop_node() {
     
     print_info "Stopping node..."
     
+    # Method 1: Kill by PID file
     if [[ -f "$PID_FILE" ]]; then
         local pid=$(cat "$PID_FILE")
-        kill "$pid" 2>/dev/null
+        if [[ -n "$pid" ]]; then
+            kill -TERM "$pid" 2>/dev/null
+            sleep 1
+            kill -KILL "$pid" 2>/dev/null
+        fi
         rm -f "$PID_FILE"
     fi
     
-    pkill -f "lumenyx-node.*--validator" 2>/dev/null || true
+    # Method 2: Kill by process name (aggressive)
+    pkill -TERM -f "lumenyx-node" 2>/dev/null
+    sleep 1
+    pkill -KILL -f "lumenyx-node" 2>/dev/null
     
-    sleep 2
+    sleep 1
     
+    # Verify
     if ! node_running; then
         print_ok "Node stopped"
     else
-        print_warning "Force killing..."
-        pkill -9 -f "lumenyx-node" 2>/dev/null
-        rm -f "$PID_FILE"
+        print_error "Failed to stop node - try: pkill -9 -f lumenyx-node"
     fi
 }
 
@@ -865,4 +872,5 @@ main() {
 }
 
 main "$@"
+
 
