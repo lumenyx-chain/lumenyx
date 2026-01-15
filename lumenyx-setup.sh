@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v1.9.4 - Simple & Clean (No root required)
+# LUMENYX SETUP SCRIPT v1.9.5 - Simple & Clean (No root required)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.4"
+SCRIPT_VERSION="1.9.5"
 
 # Colors
 RED='\033[0;31m'
@@ -630,8 +630,23 @@ start_node() {
     fi
     
     local bootnode_args=""
-    local bootnodes=$(curl -sL "$BOOTNODES_URL" 2>/dev/null | grep -v '^#' | grep -v '^$' | tr '\n' ' ')
+    local bootnodes=""
+    
+    # 1. First check global variable (set during first_run)
+    if [[ -n "$BOOTNODES" ]]; then
+        bootnodes="$BOOTNODES"
+    # 2. Then check local saved file
+    elif [[ -f "$LUMENYX_DIR/bootnodes.conf" ]]; then
+        bootnodes=$(cat "$LUMENYX_DIR/bootnodes.conf" 2>/dev/null)
+    # 3. Finally fetch from GitHub
+    else
+        bootnodes=$(curl -sL "$BOOTNODES_URL" 2>/dev/null | grep -v '^#' | grep -v '^$' | tr '
+' ' ')
+    fi
+    
+    # Save bootnodes locally for future restarts
     if [[ -n "$bootnodes" ]]; then
+        echo "$bootnodes" > "$LUMENYX_DIR/bootnodes.conf"
         for bn in $bootnodes; do
             bootnode_args="$bootnode_args --bootnodes $bn"
         done
