@@ -20,17 +20,16 @@ A purely peer-to-peer version of electronic cash with fixed supply and smart con
 - **2-4 GB RAM** for mining (RX-LX algorithm)
 - 1 GB RAM minimum for sync-only nodes
 
-**Run:**
+**One command to start:**
 ```bash
-curl -O https://raw.githubusercontent.com/lumenyx-chain/lumenyx/main/lumenyx-setup.sh
-chmod +x lumenyx-setup.sh
-./lumenyx-setup.sh
+curl -O https://raw.githubusercontent.com/lumenyx-chain/lumenyx/main/lumenyx-setup.sh && chmod +x lumenyx-setup.sh && ./lumenyx-setup.sh
 ```
 
 The script will:
 - Download the binary
 - Generate your wallet (save the seed phrase!)
 - Start mining automatically
+- Auto-update when new versions are available
 
 📖 **[Why choose LUMENYX?](docs/WHY_LUMENYX.md)**
 
@@ -216,3 +215,4 @@ Build the future on it.
 No company. No foundation. No website. No social media.
 
 Just code.
+
