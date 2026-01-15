@@ -938,7 +938,7 @@ menu_start_stop() {
 
 menu_send() {
     echo ""
-    if ! ask_yes_no "Open Send LUMENYX menu?"; then
+    if ! ask_yes_no "Open Send menu?"; then
         return
     fi
     print_dashboard
@@ -1002,7 +1002,7 @@ menu_send() {
 
 menu_receive() {
     echo ""
-    if ! ask_yes_no "Show receive address?"; then
+    if ! ask_yes_no "Show address?"; then
         return
     fi
     print_dashboard
@@ -1027,7 +1027,7 @@ menu_receive() {
 
 menu_history() {
     echo ""
-    if ! ask_yes_no "Show mining history?"; then
+    if ! ask_yes_no "Show history?"; then
         return
     fi
     print_dashboard
@@ -1048,7 +1048,7 @@ menu_history() {
 
 menu_logs() {
     echo ""
-    if ! ask_yes_no "Show live logs?"; then
+    if ! ask_yes_no "Show logs?"; then
         return
     fi
     echo ""
