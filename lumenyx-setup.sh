@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.25"
+SCRIPT_VERSION="1.9.26"
 
 # Colors
 RED='\033[0;31m'
@@ -1194,7 +1194,9 @@ if not txs:
 else:
     for tx in txs:
         sym="[OUT]" if tx["type"]=="SENT" else "[IN] "
-        print("  %s Block #%d | %12.3f LUMENYX" % (sym,tx["block"],tx["amount"]))'
+        addr = tx["from"] if tx["type"]=="RECV" else tx["to"]
+        label = "From:" if tx["type"]=="RECV" else "To:  "
+        print("  %s Block #%d | %12.3f LUMENYX | %s %s" % (sym,tx["block"],tx["amount"],label,addr))'
     else
         print_warning "Could not fetch transactions"
     fi
