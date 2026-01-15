@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v1.8.0 - Simple & Clean (No root required)
+# LUMENYX SETUP SCRIPT v1.9.4 - Simple & Clean (No root required)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
@@ -948,6 +948,7 @@ main() {
 }
 
 main "$@"
+
 
 
 
