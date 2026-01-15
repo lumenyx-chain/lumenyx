@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.20"
+SCRIPT_VERSION="1.9.21"
 
 # Colors
 RED='\033[0;31m'
@@ -1159,7 +1159,7 @@ menu_tx_history() {
     print_info "Scanning recent blocks for transactions..."
     
     local out
-    out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 200 --decimals 12 2>&1 || true)
+    out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 1000 --decimals 12 2>&1 || true)
     
     if echo "$out" | grep -q '"ok": true'; then
         echo "$out" | python3 -c 'import sys,json
