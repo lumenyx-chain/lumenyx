@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.8.0"
+SCRIPT_VERSION="1.9.0"
 
 # Colors
 RED='\033[0;31m'
@@ -31,6 +31,55 @@ RPC_RETRIES=3
 BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-linux-x86_64"
 CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-sha256.txt"
 BOOTNODES_URL="https://raw.githubusercontent.com/lumenyx-chain/lumenyx/main/bootnodes.txt"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AUTO-UPDATE CHECK
+# ═══════════════════════════════════════════════════════════════════════════════
+
+REMOTE_VERSION_URL="https://raw.githubusercontent.com/lumenyx-chain/lumenyx/main/lumenyx-setup.sh"
+
+check_for_updates() {
+    # Get remote version
+    local remote_version=$(curl -sL --connect-timeout 5 "$REMOTE_VERSION_URL" 2>/dev/null | grep '^SCRIPT_VERSION=' | cut -d'"' -f2)
+    
+    if [[ -z "$remote_version" ]]; then
+        return 0  # Can't check, continue with current version
+    fi
+    
+    if [[ "$remote_version" != "$SCRIPT_VERSION" ]]; then
+        clear
+        print_logo
+        echo -e "${YELLOW}╔════════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${YELLOW}║                    UPDATE AVAILABLE                                ║${NC}"
+        echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "  Current version: ${RED}$SCRIPT_VERSION${NC}"
+        echo -e "  New version:     ${GREEN}$remote_version${NC}"
+        echo ""
+        
+        if ask_yes_no "Update to latest version?"; then
+            print_info "Downloading update..."
+            
+            local script_path="$0"
+            if curl -sL -o "${script_path}.new" "$REMOTE_VERSION_URL" 2>/dev/null; then
+                mv "${script_path}.new" "$script_path"
+                chmod +x "$script_path"
+                print_ok "Updated to v$remote_version!"
+                echo ""
+                print_info "Restarting script..."
+                sleep 1
+                exec "$script_path" "$@"
+            else
+                print_error "Update failed - continuing with current version"
+                rm -f "${script_path}.new"
+            fi
+        else
+            print_info "Skipping update..."
+            sleep 1
+        fi
+    fi
+}
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # UI FUNCTIONS
@@ -858,6 +907,9 @@ menu_commands() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 main() {
+    # Check for script updates first
+    check_for_updates
+    
     # ALWAYS check for existing data or running processes first
     if has_existing_data; then
         prompt_clean_install
@@ -873,6 +925,7 @@ main() {
 }
 
 main "$@"
+
 
 
 
