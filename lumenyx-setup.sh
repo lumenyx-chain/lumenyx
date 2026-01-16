@@ -656,6 +656,9 @@ step_welcome() {
     print_logo
     echo -e "${BOLD}                    Welcome to LUMENYX${NC}"
     echo ""
+    echo -e "  ${CYAN}\"Bitcoin started with a headline. Ethereum started with a premine.${NC}"
+    echo -e "  ${CYAN} LUMENYX starts with you.\"${NC}"
+    echo ""
     echo "  This script will:"
     echo ""
     echo -e "    ${GREEN}1.${NC} Check your system"
