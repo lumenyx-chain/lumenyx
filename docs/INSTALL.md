@@ -58,9 +58,9 @@ Build takes 10-30 minutes.
 ./target/release/lumenyx-node --chain mainnet --name "your-node"
 ```
 
-### Mining Node
+### Miner
 ```bash
-./target/release/lumenyx-node --chain mainnet --mine --name "your-miner"
+./target/release/lumenyx-node --chain mainnet --validator --name "your-miner"
 ```
 
 That's it. You're mining.
@@ -73,7 +73,7 @@ That's it. You're mining.
 |------|-------------|
 | `--chain mainnet` | Mainnet |
 | `--chain dev` | Development mode |
-| `--mine` | Enable mining |
+| `--validator` | Enable mining (validator mode) |
 | `--name "name"` | Node name |
 | `--rpc-cors all` | Allow RPC from any origin |
 | `--rpc-external` | Expose RPC externally |
