@@ -53,6 +53,10 @@ Build takes 10-30 minutes.
 
 ## Run
 
+> **Important:** To connect to the network, you need bootnodes.
+> Get them from [`bootnodes.txt`](../bootnodes.txt) and add `--bootnodes <address>` to your command.
+
+
 ### Full Node (sync only)
 ```bash
 ./target/release/lumenyx-node --chain mainnet --name "your-node"
