@@ -1,6 +1,6 @@
 [package]
 name = "rx-lx"
-version = "1.8.0"
+version = "2.0.0"
 edition = "2021"
 description = "Safe Rust wrapper for RX-LX (RandomX-LUMENYX) PoW algorithm"
 license = "MIT"
