@@ -200,6 +200,7 @@ fn chain_properties() -> serde_json::Map<String, serde_json::Value> {
     properties.insert("tokenSymbol".into(), TOKEN_SYMBOL.into());
     properties.insert("tokenDecimals".into(), TOKEN_DECIMALS.into());
     properties.insert("ss58Format".into(), 42.into());
+    properties.insert("genesisMessage".into(), GENESIS_MESSAGE.into());
     properties
 }
 
