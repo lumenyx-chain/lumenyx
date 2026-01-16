@@ -53,6 +53,11 @@ Build takes 10-30 minutes.
 
 ## Run
 
+After building, make sure you are in the lumenyx folder:
+```bash
+cd ~/lumenyx
+```
+
 **Important:** To connect to the network, you need bootnodes. Get them from [bootnodes.txt](../bootnodes.txt) and add the `--bootnodes` flag to your command.
 
 ### Full Node (sync only)
