@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v1.9.8 - Simple & Clean (No root required)
+# LUMENYX SETUP SCRIPT v1.9.28 - Simple & Clean (No root required)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.27"
+SCRIPT_VERSION="1.9.28"
 
 # Colors
 RED='\033[0;31m'
@@ -547,14 +547,14 @@ get_peers() {
 }
 
 get_bootnodes() {
-    echo ""
-    echo -e "${CYAN}═══ BOOTNODE SETUP ═══${NC}"
-    echo ""
-    echo "  To connect to the network, you need a bootnode address."
-    echo "  Get it from someone already running LUMENYX."
-    echo ""
-    echo "  Format: /ip4/IP/tcp/30333/p2p/PEER_ID"
-    echo ""
+    echo "" >&2
+    echo -e "${CYAN}═══ BOOTNODE SETUP ═══${NC}" >&2
+    echo "" >&2
+    echo "  To connect to the network, you need a bootnode address." >&2
+    echo "  Get it from someone already running LUMENYX." >&2
+    echo "" >&2
+    echo "  Format: /ip4/IP/tcp/30333/p2p/PEER_ID" >&2
+    echo "" >&2
     read -r -p "Paste bootnode address (or ENTER to skip): " manual
     if [[ -n "$manual" ]]; then
         echo "$manual"
