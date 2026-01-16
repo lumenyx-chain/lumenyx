@@ -123,3 +123,14 @@ cargo build --release -j 2
 No registration. No staking. No permission.
 
 Just run and mine.
+
+---
+
+## Mining Wallet
+
+When you start with `--validator`, the node automatically creates a mining wallet:
+
+- **Key file:** `~/.local/share/lumenyx-node/miner-key`
+- **Address:** Shown in terminal as "💰 Mining rewards to: ..."
+
+**Important:** Back up your `miner-key` file! It contains your private key.
