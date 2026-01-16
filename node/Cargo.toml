@@ -1,13 +1,13 @@
 [package]
 name = "lumenyx-node"
-version = "1.8.0"
+version = "2.0.0"
 edition = "2021"
 build = "build.rs"
 
 [dependencies]
 hex = "0.4"
 parking_lot = "0.12"
-async-channel = "1.8.0"
+async-channel = "2.0.0"
 sc-utils = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 codec = { package = "parity-scale-codec", version = "3.6", features = ["derive"] }
 frame-support = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
