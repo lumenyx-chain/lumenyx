@@ -7,7 +7,7 @@
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.26"
+SCRIPT_VERSION="1.9.27"
 
 # Colors
 RED='\033[0;31m'
@@ -547,18 +547,17 @@ get_peers() {
 }
 
 get_bootnodes() {
-    local bootnodes
-    bootnodes=$(curl -sL "$BOOTNODES_URL" 2>/dev/null | grep -v '^#' | grep -v '^$' | tr '\n' ' ')
-
-    if [[ -z "$bootnodes" ]]; then
-        echo -e "${YELLOW}!${NC} No bootnodes found in repository." >&2
-        echo ""
-        read -r -p "Enter bootnode manually (or ENTER to skip): " manual
-        if [[ -n "$manual" ]]; then
-            echo "$manual"
-        fi
-    else
-        echo "$bootnodes"
+    echo ""
+    echo -e "${CYAN}═══ BOOTNODE SETUP ═══${NC}"
+    echo ""
+    echo "  To connect to the network, you need a bootnode address."
+    echo "  Get it from someone already running LUMENYX."
+    echo ""
+    echo "  Format: /ip4/IP/tcp/30333/p2p/PEER_ID"
+    echo ""
+    read -r -p "Paste bootnode address (or ENTER to skip): " manual
+    if [[ -n "$manual" ]]; then
+        echo "$manual"
     fi
 }
 
