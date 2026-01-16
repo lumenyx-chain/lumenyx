@@ -4,16 +4,16 @@
 
 ## Requirements
 
-### Minimum
-- CPU: 4 cores
-- RAM: 8 GB
-- Storage: 100 GB SSD
+### Minimum (sync-only)
+- CPU: 1+ cores
+- RAM: 1 GB
+- Storage: 20 GB SSD
 - Network: 10 Mbps
 
-### Recommended
-- CPU: 8+ cores
-- RAM: 16 GB
-- Storage: 500 GB NVMe SSD
+### Recommended (mining)
+- CPU: 2+ cores
+- RAM: 2-4 GB
+- Storage: 50 GB SSD
 - Network: 100 Mbps
 
 ---
