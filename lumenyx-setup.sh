@@ -6,7 +6,7 @@
 
 set -e
 
-VERSION="1.7.1"
+VERSION="1.8.0"
 SCRIPT_VERSION="1.9.29"
 
 # Colors
