@@ -21,27 +21,42 @@
 ## Build
 
 ### Ubuntu/Debian
-```bash
-# Install dependencies
-sudo apt update
-sudo apt install -y build-essential git clang curl libssl-dev llvm libudev-dev protobuf-compiler cmake
 
-# Install Rust
+**Step 1: Install dependencies**
+```bash
+sudo apt update && sudo apt install -y build-essential git clang curl libssl-dev llvm libudev-dev protobuf-compiler cmake
+```
+
+**Step 2: Install Rust**
+```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
+```
 
-# Clone and build
+**Step 3: Clone and build**
+```bash
 git clone --recursive https://github.com/lumenyx-chain/lumenyx
 cd lumenyx
 cargo build --release
 ```
 
+Build takes 10-30 minutes.
+
 ### macOS
+
+**Step 1: Install dependencies**
 ```bash
 brew install openssl protobuf cmake
+```
+
+**Step 2: Install Rust**
+```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
+```
 
+**Step 3: Clone and build**
+```bash
 git clone --recursive https://github.com/lumenyx-chain/lumenyx
 cd lumenyx
 cargo build --release
