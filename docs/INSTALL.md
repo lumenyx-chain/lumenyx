@@ -53,17 +53,16 @@ Build takes 10-30 minutes.
 
 ## Run
 
-> **Important:** To connect to the network, you need bootnodes.
-> Get them from [bootnodes.txt](../bootnodes.txt) and add `--bootnodes <address>` to your command.
+**Important:** To connect to the network, you need bootnodes. Get them from [bootnodes.txt](../bootnodes.txt) and add the `--bootnodes` flag to your command.
 
 ### Full Node (sync only)
 ```bash
-./target/release/lumenyx-node --chain mainnet --bootnodes "<BOOTNODE_ADDRESS>" --name "your-node"
+./target/release/lumenyx-node --chain mainnet --bootnodes "/ip4/IP/tcp/30333/p2p/PEER_ID" --name "your-node"
 ```
 
 ### Miner
 ```bash
-./target/release/lumenyx-node --chain mainnet --validator --bootnodes "<BOOTNODE_ADDRESS>" --name "your-miner"
+./target/release/lumenyx-node --chain mainnet --validator --bootnodes "/ip4/IP/tcp/30333/p2p/PEER_ID" --name "your-miner"
 ```
 
 That's it. You're mining.
@@ -76,11 +75,11 @@ That's it. You're mining.
 |------|-------------|
 | `--chain mainnet` | Mainnet |
 | `--chain dev` | Development mode |
-| `--validator` | Enable mining (validator mode) |
+| `--validator` | Enable mining |
 | `--name "name"` | Node name |
+| `--bootnodes "addr"` | Connect to bootnode |
 | `--rpc-cors all` | Allow RPC from any origin |
 | `--rpc-external` | Expose RPC externally |
-| `--bootnodes "<addr>"` | Connect to bootnode (get from bootnodes.txt) |
 
 ---
 
@@ -114,15 +113,7 @@ cargo build --release -j 2
 - Check firewall: port 30333 must be open
 
 **RPC not accessible**
-```bash
---rpc-external --rpc-cors all
-```
-
----
-
-No registration. No staking. No permission.
-
-Just run and mine.
+- Add flags: `--rpc-external --rpc-cors all`
 
 ---
 
@@ -131,6 +122,12 @@ Just run and mine.
 When you start with `--validator`, the node automatically creates a mining wallet:
 
 - **Key file:** `~/.local/share/lumenyx-node/miner-key`
-- **Address:** Shown in terminal as "💰 Mining rewards to: ..."
+- **Address:** Shown in terminal as "Mining rewards to: ..."
 
 **Important:** Back up your `miner-key` file! It contains your private key.
+
+---
+
+No registration. No staking. No permission.
+
+Just run and mine.
