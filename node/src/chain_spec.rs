@@ -143,7 +143,7 @@ fn mainnet_genesis() -> serde_json::Value {
             "balances": genesis_allocations,
         },
         "difficulty": {
-            "initialDifficulty": 1
+            "initialDifficulty": 2
         },
         "evm": {
             "accounts": {}

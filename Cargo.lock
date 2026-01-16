@@ -4703,6 +4703,7 @@ dependencies = [
  "pallet-difficulty",
  "pallet-ethereum",
  "pallet-evm",
+ "pallet-evm-bridge",
  "pallet-evm-precompile-blake2",
  "pallet-evm-precompile-bn128",
  "pallet-evm-precompile-modexp",
@@ -5679,6 +5680,21 @@ dependencies = [
  "sp-core",
  "sp-io",
  "sp-runtime",
+]
+
+[[package]]
+name = "pallet-evm-bridge"
+version = "1.8.0"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "pallet-evm",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
 ]
 
 [[package]]
