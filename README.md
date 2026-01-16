@@ -35,6 +35,8 @@ The script will:
 
 🌐 **[Bootnodes](bootnodes.txt)** - Network bootstrap nodes
 
+🔧 **[Build from source](docs/INSTALL.md)** - Compile yourself
+
 ---
 
 ### Check Your Node
