@@ -4603,7 +4603,7 @@ dependencies = [
 
 [[package]]
 name = "lumenyx-node"
-version = "1.4.0"
+version = "1.8.0"
 dependencies = [
  "async-channel",
  "async-trait",
@@ -4673,7 +4673,7 @@ dependencies = [
 
 [[package]]
 name = "lumenyx-primitives"
-version = "1.0.0"
+version = "1.8.0"
 dependencies = [
  "parity-scale-codec",
  "scale-info",
@@ -4684,7 +4684,7 @@ dependencies = [
 
 [[package]]
 name = "lumenyx-runtime"
-version = "1.0.0"
+version = "1.8.0"
 dependencies = [
  "fp-evm",
  "fp-rpc",
@@ -5621,7 +5621,7 @@ dependencies = [
 
 [[package]]
 name = "pallet-difficulty"
-version = "1.0.0"
+version = "1.8.0"
 dependencies = [
  "frame-support",
  "frame-system",
@@ -5729,7 +5729,7 @@ dependencies = [
 
 [[package]]
 name = "pallet-halving"
-version = "1.0.0"
+version = "1.8.0"
 dependencies = [
  "frame-support",
  "frame-system",
@@ -5763,7 +5763,7 @@ dependencies = [
 
 [[package]]
 name = "pallet-time-rules"
-version = "0.1.0"
+version = "1.8.0"
 dependencies = [
  "frame-support",
  "frame-system",
@@ -7172,7 +7172,7 @@ dependencies = [
 
 [[package]]
 name = "rx-lx"
-version = "0.1.0"
+version = "1.8.0"
 dependencies = [
  "hex",
  "rx-lx-sys",
@@ -7181,7 +7181,7 @@ dependencies = [
 
 [[package]]
 name = "rx-lx-sys"
-version = "0.1.0"
+version = "1.8.0"
 dependencies = [
  "cmake",
  "libc",
