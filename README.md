@@ -41,7 +41,7 @@ The script will:
 
 **Check if running:**
 ```bash
-journalctl -u lumenyx-node -n 20 --no-pager
+tail -n 20 ~/.lumenyx/lumenyx.log
 ```
 If you see "Imported block" or "Prepared block" = working.
 
