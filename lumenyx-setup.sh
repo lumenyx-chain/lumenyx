@@ -935,6 +935,7 @@ start_node() {
         >> "$LOG_FILE" 2>&1 &
 
     echo $! > "$PID_FILE"
+    disown
 
     sleep 3
 
