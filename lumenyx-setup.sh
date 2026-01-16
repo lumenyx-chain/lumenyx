@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v1.9.28 - Simple & Clean (No root required)
+# LUMENYX SETUP SCRIPT v1.9.29 - Simple & Clean (No root required)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
 VERSION="1.7.1"
-SCRIPT_VERSION="1.9.28"
+SCRIPT_VERSION="1.9.29"
 
 # Colors
 RED='\033[0;31m'
@@ -325,7 +325,20 @@ def main():
             if not n_hex:
                 raise Exception("Missing header number")
             best = int(n_hex, 16)
-            print(json.dumps({"ok": True, "best": best}))
+            # Get sync state for target block
+            target = best
+            syncing = False
+            try:
+                sync = substrate.rpc_request("system_syncState", [])
+                if sync.get("result"):
+                    current = sync["result"].get("currentBlock", best)
+                    highest = sync["result"].get("highestBlock", best)
+                    if highest > current:
+                        target = highest
+                        syncing = True
+            except:
+                pass
+            print(json.dumps({"ok": True, "best": best, "target": target, "syncing": syncing}))
         except Exception as e:
             print(json.dumps({"ok": False, "error": "Header failed: " + str(e)}))
             sys.exit(1)
@@ -508,21 +521,23 @@ get_balance() {
 
 get_block() {
     if ! node_running; then
-        echo "offline"
+        echo "offline|0|false"
         return
     fi
 
     ensure_helpers
-    ensure_python_deps >/dev/null || { echo "offline"; return; }
+    ensure_python_deps >/dev/null || { echo "offline|0|false"; return; }
 
-    local out ok best
+    local out ok best target syncing
     out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode block 2>/dev/null || true)
     ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
     if [[ "$ok" == "true" ]]; then
         best=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("best",""))' 2>/dev/null || true)
-        [[ -n "$best" ]] && { echo "$best"; return; }
+        target=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("target",""))' 2>/dev/null || true)
+        syncing=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("syncing",False))' 2>/dev/null || true)
+        [[ -n "$best" ]] && { echo "$best|${target:-$best}|${syncing:-false}"; return; }
     fi
-    echo "offline"
+    echo "offline|0|false"
 }
 
 get_peers() {
@@ -972,10 +987,25 @@ print_dashboard() {
         short_addr="Not set"
     fi
 
-    local balance block peers
+    local balance block_info peers
     balance=$(get_balance)
-    block=$(get_block)
+    block_info=$(get_block)
     peers=$(get_peers)
+    
+    # Parse block info: best|target|syncing
+    local block target syncing block_display
+    block=$(echo "$block_info" | cut -d'|' -f1)
+    target=$(echo "$block_info" | cut -d'|' -f2)
+    syncing=$(echo "$block_info" | cut -d'|' -f3)
+    
+    if [[ "$block" == "offline" ]]; then
+        block_display="#offline"
+    elif [[ "$syncing" == "True" && "$target" -gt "$block" ]]; then
+        local pct=$((block * 100 / target))
+        block_display="#${block} / #${target} (${pct}%)"
+    else
+        block_display="#${block} ✓"
+    fi
 
     local status="STOPPED"
     local status_color="${RED}○"
@@ -989,7 +1019,7 @@ print_dashboard() {
     echo ""
     echo -e "  Wallet:   ${GREEN}$short_addr${NC}"
     echo -e "  Balance:  ${GREEN}$balance LUMENYX${NC}"
-    echo -e "  Block:    #$block"
+    echo -e "  Block:    $block_display"
     echo -e "  Status:   ${status_color} ${status}${NC}"
     echo -e "  Peers:    $peers"
     echo ""
