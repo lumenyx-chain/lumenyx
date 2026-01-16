@@ -41,7 +41,7 @@ The script will:
 
 **Check if running:**
 ```bash
-journalctl -u lumenyx -n 20 --no-pager
+journalctl -u lumenyx-node -n 20 --no-pager
 ```
 If you see "Imported block" or "Prepared block" = working.
 
