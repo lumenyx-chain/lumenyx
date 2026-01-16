@@ -33,7 +33,7 @@ Proof of Work with LongestChain fork choice.
 | Parameter | Value |
 |-----------|-------|
 | Block time | 2.5 seconds |
-| Hash function | Blake3 |
+| Hash function | RX-LX (RandomX-LUMENYX) |
 | Fork choice | Longest chain |
 
 Anyone with a computer can mine. No stake required. No permission needed.
@@ -76,8 +76,8 @@ Everything built on Ethereum can be built on LUMENYX.
 | Parameter | Value |
 |-----------|-------|
 | Fee destination | 100% to miners |
-| Min gas price | 45 planck/gas |
-| Dynamic adjustment | ±10% per block |
+| Default base fee | 1,000 planck/gas |
+| Elasticity | ±12.5% per block |
 
 Fees stay low. Even if LUMENYX reaches $1000, a simple transfer costs less than $0.001.
 
