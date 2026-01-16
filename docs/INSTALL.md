@@ -66,6 +66,27 @@ Build takes 10-30 minutes.
 
 ---
 
+
+---
+
+## Update
+
+If you already have LUMENYX cloned and want to update:
+
+```bash
+cd ~/lumenyx
+git pull
+git submodule update --init --recursive
+cargo build --release
+```
+
+**Important:** The `git submodule update` step is required. Without it, you may have an outdated RX-LX algorithm and your node will not sync with the network.
+
+After updating, delete old chain data:
+```bash
+rm -rf ~/.local/share/lumenyx-node/chains/
+```
+
 ## Run
 
 After building, make sure you are in the lumenyx folder:
@@ -129,8 +150,23 @@ To reset: delete the data directory and restart.
 cargo build --release -j 2
 ```
 
+**Build fails with CMake error**
+```bash
+git submodule update --init --recursive
+cargo build --release
+```
+
 **Cannot connect to peers**
 - Check firewall: port 30333 must be open
+- Make sure you have the correct bootnode from [bootnodes.txt](../bootnodes.txt)
+
+**Genesis mismatch / Node won't sync**
+```bash
+rm -rf ~/.local/share/lumenyx-node/chains/
+git submodule update --init --recursive
+cargo build --release
+```
+Then restart your node.
 
 **RPC not accessible**
 - Add flags: `--rpc-external --rpc-cors all`
