@@ -55,12 +55,12 @@ Build takes 10-30 minutes.
 
 ### Full Node (sync only)
 ```bash
-./target/release/lumenyx --chain lumenyx --name "your-node"
+./target/release/lumenyx-node --chain mainnet --name "your-node"
 ```
 
 ### Validator/Miner
 ```bash
-./target/release/lumenyx --chain lumenyx --validator --name "your-miner"
+./target/release/lumenyx-node --chain mainnet --validator --name "your-miner"
 ```
 
 That's it. You're mining.
@@ -71,7 +71,7 @@ That's it. You're mining.
 
 | Flag | Description |
 |------|-------------|
-| `--chain lumenyx` | Mainnet |
+| `--chain mainnet` | Mainnet |
 | `--chain dev` | Development mode |
 | `--validator` | Enable mining/validating |
 | `--name "name"` | Node name |
@@ -82,7 +82,7 @@ That's it. You're mining.
 
 ## Verify
 ```bash
-./target/release/lumenyx --version
+./target/release/lumenyx-node --version
 ```
 
 ---
@@ -91,9 +91,9 @@ That's it. You're mining.
 
 | OS | Path |
 |----|------|
-| Linux | `~/.local/share/lumenyx/` |
-| macOS | `~/Library/Application Support/lumenyx/` |
-| Windows | `%APPDATA%\lumenyx\` |
+| Linux | `~/.local/share/lumenyx-node/` |
+| macOS | `~/Library/Application Support/lumenyx-node/` |
+| Windows | `%APPDATA%\lumenyx-node\` |
 
 To reset: delete the data directory and restart.
 
