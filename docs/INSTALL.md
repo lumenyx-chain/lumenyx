@@ -59,12 +59,12 @@ Build takes 10-30 minutes.
 
 ### Full Node (sync only)
 ```bash
-./target/release/lumenyx-node --chain mainnet --name "your-node"
+./target/release/lumenyx-node --chain mainnet --bootnodes "<BOOTNODE_ADDRESS>" --name "your-node"
 ```
 
 ### Miner
 ```bash
-./target/release/lumenyx-node --chain mainnet --validator --name "your-miner"
+./target/release/lumenyx-node --chain mainnet --validator --bootnodes "<BOOTNODE_ADDRESS>" --name "your-miner"
 ```
 
 That's it. You're mining.
@@ -81,6 +81,7 @@ That's it. You're mining.
 | `--name "name"` | Node name |
 | `--rpc-cors all` | Allow RPC from any origin |
 | `--rpc-external` | Expose RPC externally |
+| `--bootnodes "<addr>"` | Connect to bootnode (get from bootnodes.txt) |
 
 ---
 
