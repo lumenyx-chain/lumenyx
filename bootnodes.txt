@@ -1,3 +1,5 @@
 # LUMENYX Bootnodes
 # Format: /ip4/IP/tcp/30333/p2p/PEER_ID
 # Copy and paste when the setup script asks for bootnode
+
+/ip4/89.147.111.102/tcp/30333/p2p/12D3KooWS1fio8rRrFDu2UmsCLKJcHVuhTUNkpThBkzkK3znkTmL
