@@ -86,6 +86,21 @@ This is how Bitcoin started. This is how crypto should be.
 
 ---
 
+## Community Governance
+
+There is no team to make decisions. The community decides everything:
+- Exchange listings
+- Protocol upgrades
+- Future development
+- Marketing (if any)
+
+LUMENYX has no governance token, no voting mechanism built-in.
+Decisions happen through consensus - discussions on BitcoinTalk, GitHub, or wherever the community gathers.
+
+The chain belongs to no one. It belongs to everyone.
+
+---
+
 ## No Promises
 
 We don't promise you'll get rich.
@@ -144,5 +159,3 @@ No company. No foundation. No website. No social media.
 Just code.
 
 ---
-
-
