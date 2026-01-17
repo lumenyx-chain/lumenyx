@@ -1247,10 +1247,7 @@ menu_logs() {
     print_warning "Note: Ctrl+C will return to menu, mining continues in background"
     echo ""
 
-    # Check if running as systemd service first
-    if systemctl is-active --quiet lumenyx 2>/dev/null; then
-        journalctl -u lumenyx -f -n 50
-    elif [[ -f "$LOG_FILE" ]]; then
+    if [[ -f "$LOG_FILE" ]]; then
         tail -f "$LOG_FILE"
     else
         print_error "No log file found. Start mining first."
@@ -1265,14 +1262,14 @@ show_my_bootnode() {
     echo -e "${CYAN}═══ SHOW MY BOOTNODE ═══${NC}"
     echo ""
 
-    local peer_id
-
-    # Check if running as systemd service first
-    if systemctl is-active --quiet lumenyx 2>/dev/null; then
-        peer_id=$(journalctl -u lumenyx --no-pager 2>/dev/null | grep "Local node identity" | tail -1 | awk '{print $NF}')
-    elif [[ -f "$LOG_FILE" ]]; then
-        peer_id=$(grep "Local node identity" "$LOG_FILE" 2>/dev/null | tail -1 | awk '{print $NF}')
+    if [[ ! -f "$LOG_FILE" ]]; then
+        print_error "Log file not found: $LOG_FILE"
+        wait_enter
+        return
     fi
+
+    local peer_id
+    peer_id=$(grep "Local node identity" "$LOG_FILE" 2>/dev/null | tail -1 | awk '{print $NF}')
 
     if [[ -z "$peer_id" ]]; then
         print_error "Peer ID not found in logs. Start the node and wait for 'Local node identity'."
