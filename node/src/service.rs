@@ -3,12 +3,17 @@
 //! PoW consensus with on-chain difficulty adjustment.
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use sc_network::NetworkBlock;
 use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use sp_core::{sr25519, Pair, crypto::Ss58Codec, H256, U256, storage::StorageKey};
 use sp_runtime::generic::DigestItem;
 use codec::{Encode, Decode};
 
 use futures::StreamExt;
+use tokio::sync::{watch, mpsc};
+
 use lumenyx_runtime::{self, opaque::Block, RuntimeApi};
 use sc_client_api::{BlockBackend, BlockchainEvents, AuxStore, HeaderBackend, StorageProvider};
 use sc_consensus::{BlockImportParams, import_queue::Verifier, BlockImport};
@@ -81,24 +86,28 @@ where
     C: StorageProvider<Block, FullBackend>,
 {
     let key = difficulty_storage_key();
-    
+
     match client.storage(at, &key) {
-        Ok(Some(data)) => {
-            // Decode u128 from storage
-            match u128::decode(&mut &data.0[..]) {
-                Ok(diff) => {
-                    log::debug!("📊 Read difficulty from storage: {}", diff);
-                    diff
-                }
-                Err(e) => {
-                    log::warn!("Failed to decode difficulty: {:?}, using fallback", e);
-                    FALLBACK_DIFFICULTY
-                }
+        Ok(Some(data)) => match u128::decode(&mut &data.0[..]) {
+            Ok(diff) => {
+                log::debug!("📊 Read difficulty from storage: {}", diff);
+                diff
             }
-        }
+            Err(e) => {
+                log::warn!("Failed to decode difficulty: {:?}, using fallback", e);
+                FALLBACK_DIFFICULTY
+            }
+        },
         Ok(None) => {
-            log::error!("❌ CRITICAL: Difficulty storage key NOT FOUND at block {:?}! This usually means storage prefix mismatch or corrupted state.", at);
-            log::warn!("⚠️ No difficulty in storage yet (block {:?}), using fallback: {}", at, FALLBACK_DIFFICULTY);
+            log::error!(
+                "❌ CRITICAL: Difficulty storage key NOT FOUND at block {:?}! This usually means storage prefix mismatch or corrupted state.",
+                at
+            );
+            log::warn!(
+                "⚠️ No difficulty in storage yet (block {:?}), using fallback: {}",
+                at,
+                FALLBACK_DIFFICULTY
+            );
             FALLBACK_DIFFICULTY
         }
         Err(e) => {
@@ -160,19 +169,19 @@ impl RxLxPow {
     {
         let flags = Flags::recommended(); // soft AES forced for custom SBOX
         let mut cache = Cache::alloc(flags).map_err(|e| format!("Cache alloc failed: {:?}", e))?;
-        
+
         let seed_height = seed_sched::seed_height(height);
         let seed = seed_sched::get_seed(height, &get_block_hash);
-        
+
         log::info!("🔧 Initializing RX-LX cache with seed from block #{}", seed_height);
         cache.init(seed.as_ref());
-        
+
         let vm = Vm::light(flags, &cache).map_err(|e| format!("VM creation failed: {:?}", e))?;
         log::info!("✅ RX-LX initialized successfully");
-        
+
         Ok(Self { flags, cache, vm, seed_height, seed })
     }
-    
+
     /// Check if seed changed and reinitialize if needed
     fn maybe_reseed<F>(&mut self, height: u64, get_block_hash: F) -> Result<(), String>
     where
@@ -182,19 +191,19 @@ impl RxLxPow {
         if new_seed_height == self.seed_height {
             return Ok(());
         }
-        
+
         let new_seed = seed_sched::get_seed(height, &get_block_hash);
         log::info!("🔄 RX-LX seed change: block #{} -> #{}", self.seed_height, new_seed_height);
-        
+
         self.cache.init(new_seed.as_ref());
         self.vm = Vm::light(self.flags, &self.cache).map_err(|e| format!("VM recreation failed: {:?}", e))?;
-        
+
         self.seed_height = new_seed_height;
         self.seed = new_seed;
         log::info!("✅ RX-LX reseeded successfully");
         Ok(())
     }
-    
+
     /// Compute RX-LX hash: input = header_hash || nonce (64 bytes)
     fn hash(&self, header_hash: &H256, nonce: &[u8; 32]) -> H256 {
         let mut input = [0u8; 64];
@@ -204,7 +213,187 @@ impl RxLxPow {
     }
 }
 
-// Legacy Blake3 function - kept for reference, no longer used
+// ----------------------------
+// Mining job messages (workers)
+// ----------------------------
+#[derive(Clone, Copy, Debug)]
+struct MiningJob {
+    job_id: u64,
+    height: u64,
+    parent_hash: H256,
+    header_hash: H256,
+    target: H256,
+    seed_height: u64,
+    seed: H256,
+}
+
+#[derive(Clone, Debug)]
+struct FoundNonce {
+    job_id: u64,
+    nonce: [u8; 32],
+}
+
+// ----------------------------
+// Persistent miner state (+ hashrate counters)
+// ----------------------------
+struct MinerState {
+    job_tx: watch::Sender<MiningJob>,
+    found_rx: mpsc::UnboundedReceiver<FoundNonce>,
+    job_id: u64,
+    last_parent_hash: Option<H256>,
+
+    // Hashrate counters
+    total_hashes: Arc<AtomicU64>,
+    per_thread_hashes: Arc<Vec<AtomicU64>>,
+}
+
+impl MinerState {
+    fn new(num_threads: usize) -> Self {
+        let dummy_job = MiningJob {
+            job_id: 0,
+            height: 0,
+            parent_hash: H256::zero(),
+            header_hash: H256::zero(),
+            target: H256::repeat_byte(0xff),
+            seed_height: 0,
+            seed: H256::zero(),
+        };
+
+        let (job_tx, job_rx) = watch::channel(dummy_job);
+        let (found_tx, found_rx) = mpsc::unbounded_channel::<FoundNonce>();
+
+        let total_hashes = Arc::new(AtomicU64::new(0));
+        let per_thread_hashes = Arc::new((0..num_threads).map(|_| AtomicU64::new(0)).collect::<Vec<_>>());
+
+        for thread_id in 0..num_threads {
+            let mut job_rx = job_rx.clone();
+            let found_tx = found_tx.clone();
+
+            let total_hashes = total_hashes.clone();
+            let per_thread_hashes = per_thread_hashes.clone();
+
+            std::thread::Builder::new()
+                .name(format!("pow-worker-{}", thread_id))
+                .spawn(move || {
+                    const CHUNK_ITERS: u64 = 20;
+
+                    let flags = rx_lx::Flags::recommended();
+                    let mut cache = match rx_lx::Cache::alloc(flags) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            log::error!("Worker {}: Cache alloc failed: {:?}", thread_id, e);
+                            return;
+                        }
+                    };
+
+                    let mut vm_opt: Option<rx_lx::Vm> = None;
+                    let mut last_seed_height: u64 = u64::MAX;
+
+                    let mut local_nonce = [0u8; 32];
+                    let seed_time = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos() as u64;
+                    local_nonce[0..8].copy_from_slice(&seed_time.to_le_bytes());
+                    local_nonce[8..16].copy_from_slice(&(thread_id as u64).to_le_bytes());
+
+                    loop {
+                        if futures::executor::block_on(job_rx.changed()).is_err() {
+                            return;
+                        }
+                        let job = *job_rx.borrow();
+
+                        if job.seed_height != last_seed_height {
+                            let seed_bytes: [u8; 32] = job.seed.into();
+                            cache.init(&seed_bytes);
+
+                            match rx_lx::Vm::light(flags, &cache) {
+                                Ok(vm) => vm_opt = Some(vm),
+                                Err(e) => {
+                                    log::error!("Worker {}: VM creation failed: {:?}", thread_id, e);
+                                    vm_opt = None;
+                                    continue;
+                                }
+                            }
+                            last_seed_height = job.seed_height;
+                        }
+
+                        let Some(vm) = vm_opt.as_ref() else {
+                            continue;
+                        };
+
+                        loop {
+                            let job_now = *job_rx.borrow();
+                            if job_now.job_id != job.job_id {
+                                break;
+                            }
+
+                            let header_hash = job.header_hash;
+                            let target = job.target;
+
+                            for _ in 0..CHUNK_ITERS {
+                                // increment nonce
+                                for i in 0..32 {
+                                    if local_nonce[i] == 255 { local_nonce[i] = 0; }
+                                    else { local_nonce[i] += 1; break; }
+                                }
+
+                                // input = header_hash || nonce
+                                let mut input = [0u8; 64];
+                                input[..32].copy_from_slice(header_hash.as_ref());
+                                input[32..].copy_from_slice(&local_nonce);
+
+                                let pow_hash = sp_core::H256::from_slice(&vm.hash(&input));
+
+                                // hash counters
+                                per_thread_hashes[thread_id].fetch_add(1, Ordering::Relaxed);
+                                total_hashes.fetch_add(1, Ordering::Relaxed);
+
+                                if pow_hash <= target {
+                                    let _ = found_tx.send(FoundNonce {
+                                        job_id: job.job_id,
+                                        nonce: local_nonce,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                })
+                .expect("failed to spawn pow worker thread");
+        }
+
+        Self {
+            job_tx,
+            found_rx,
+            job_id: 0,
+            last_parent_hash: None,
+            total_hashes,
+            per_thread_hashes,
+        }
+    }
+
+    fn next_job_id_if_parent_changed(&mut self, parent_hash: H256) -> (u64, bool) {
+        match self.last_parent_hash {
+            Some(prev) if prev == parent_hash => (self.job_id, false),
+            _ => {
+                self.job_id = self.job_id.wrapping_add(1).max(1);
+                self.last_parent_hash = Some(parent_hash);
+                (self.job_id, true)
+            }
+        }
+    }
+
+    fn snapshot_hash_counts(&self) -> (u64, Vec<u64>) {
+        let total = self.total_hashes.load(Ordering::Relaxed);
+        let per = self.per_thread_hashes
+            .iter()
+            .map(|c| c.load(Ordering::Relaxed))
+            .collect::<Vec<_>>();
+        (total, per)
+    }
+}
+
 #[allow(dead_code)]
 fn compute_pow_hash_blake3(data: &[u8], nonce: &[u8; 32]) -> H256 {
     let mut hasher = blake3::Hasher::new();
@@ -212,30 +401,25 @@ fn compute_pow_hash_blake3(data: &[u8], nonce: &[u8; 32]) -> H256 {
     hasher.update(nonce);
     H256::from_slice(&hasher.finalize().as_bytes()[..32])
 }
-// PoW constants
+
 const MIN_DIFFICULTY: u128 = 1;
 const MAX_DIFFICULTY: u128 = u128::MAX;
-const POW_LIMIT: H256 = H256::repeat_byte(0xff); // 2^256 - 1
+const POW_LIMIT: H256 = H256::repeat_byte(0xff);
 
 fn difficulty_to_target(difficulty: u128) -> H256 {
-    // 1) Clamp difficulty in [MIN, MAX] e protezione da 0
     let mut d = difficulty;
     if d < MIN_DIFFICULTY { d = MIN_DIFFICULTY; }
     if d > MAX_DIFFICULTY { d = MAX_DIFFICULTY; }
     if d == 0 { d = MIN_DIFFICULTY; }
 
-    // 2) pow_limit (H256) -> U256 (big-endian)
     let pow_u = U256::from_big_endian(POW_LIMIT.as_fixed_bytes());
 
-    // 3) u128 difficulty -> U256 (zero-extend a 32 byte, big-endian)
     let mut d_be = [0u8; 32];
     d_be[16..].copy_from_slice(&d.to_be_bytes());
     let d_u = U256::from_big_endian(&d_be);
 
-    // 4) target = pow_limit / difficulty
     let mut target_u = pow_u / d_u;
 
-    // 5) Clamp target: minimo 1, massimo pow_limit
     if target_u == U256::from(0u64) {
         target_u = U256::from(1u64);
     }
@@ -243,22 +427,16 @@ fn difficulty_to_target(difficulty: u128) -> H256 {
         target_u = pow_u;
     }
 
-    // 6) U256 -> H256 (big-endian)
     let mut target_be = [0u8; 32];
     target_u.to_big_endian(&mut target_be);
     H256::from_slice(&target_be)
 }
 
 fn hash_meets_target(hash: &H256, target: &H256) -> bool {
-    // Confronto diretto H256 (ChatGPT fix)
     hash <= target
 }
 
 /// RxLxVerifier - Verifica blocchi PoW e gestisce correttamente il seal
-/// 
-/// Quando un blocco arriva dalla rete, il seal è in header.digest.logs.
-/// RxLxVerifier - Strip ALL post-runtime digests from header, move to post_digests
-/// Il runtime si aspetta header con SOLO PreRuntime, tutto il resto va in post_digests
 pub struct RxLxVerifier;
 
 #[async_trait::async_trait]
@@ -267,44 +445,34 @@ impl Verifier<Block> for RxLxVerifier {
         &self,
         mut block: BlockImportParams<Block>,
     ) -> Result<BlockImportParams<Block>, String> {
-        // Sposta TUTTI i digest LUMENYX (tranne PreRuntime) in post_digests
         let mut moved: Vec<DigestItem> = Vec::new();
 
         block.header.digest_mut().logs.retain(|item| {
-            // Controlla se è un digest LUMENYX
             let dominated = item.as_pre_runtime().map(|(id, _)| id == LUMENYX_ENGINE_ID).unwrap_or(false);
             let is_seal = matches!(item, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID);
             let is_consensus = matches!(item, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID);
-            
-            // Mantieni SOLO PreRuntime nell'header
+
             if dominated {
-                return true; // PreRuntime resta nell'header
+                return true;
             }
-            
-            // Sposta Seal e Consensus in post_digests
             if is_seal || is_consensus {
                 moved.push(item.clone());
-                return false; // rimuovi dall'header
+                return false;
             }
-            
-            // Mantieni altri digest non-LUMENYX
             true
         });
 
-        // Verifica che ci sia almeno un Seal
         let has_seal = moved.iter().any(|d| matches!(d, DigestItem::Seal(_, _)));
         if !has_seal {
             return Err("Missing LUMENYX seal in header digest".into());
         }
 
-        // Pulisci post_digests da eventuali duplicati LUMENYX e aggiungi quelli estratti
         block.post_digests.retain(|d| {
             !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID) &&
             !matches!(d, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID)
         });
         block.post_digests.extend(moved);
 
-        // fork_choice is now decided by PowBlockImport based on Total Difficulty
         Ok(block)
     }
 }
@@ -376,8 +544,6 @@ pub fn new_partial(
     );
 
     let verifier = RxLxVerifier;
-
-    // PoW+TD block import wrapper (verifies RX-LX PoW before import)
     let pow_block_import = LumenyxPowBlockImport::new(client.clone());
 
     let import_queue = sc_consensus::BasicQueue::new(
@@ -424,7 +590,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         other: (_, mut telemetry, frontier_backend, frontier_partial, pow_block_import),
     } = new_partial(&config)?;
 
-    let net_config = sc_network::config::FullNetworkConfiguration::<Block, <Block as BlockT>::Hash, sc_network::NetworkWorker<Block, <Block as BlockT>::Hash>>::new(&config.network, config.prometheus_registry().cloned());
+    let net_config = sc_network::config::FullNetworkConfiguration::<
+        Block,
+        <Block as BlockT>::Hash,
+        sc_network::NetworkWorker<Block, <Block as BlockT>::Hash>,
+    >::new(&config.network, config.prometheus_registry().cloned());
 
     let metrics = sc_network::NotificationMetrics::new(config.prometheus_registry());
 
@@ -458,8 +628,6 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
     let pubsub_notification_sinks: Arc<EthereumBlockNotificationSinks<EthereumBlockNotification<Block>>> = Default::default();
 
-
-    // Spawn Frontier EVM mapping sync worker
     match &*frontier_backend {
         fc_db::Backend::KeyValue(b) => {
             task_manager.spawn_essential_handle().spawn(
@@ -481,8 +649,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             );
         }
     }
-    // Spawn Frontier EVM mapping sync worker
-    // Spawn Frontier fee history task
+
     task_manager.spawn_essential_handle().spawn(
         "frontier-fee-history",
         None,
@@ -566,7 +733,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     })?;
 
     // ============================================
-    // POW MINING WITH DYNAMIC DIFFICULTY
+    // POW MINING WITH DYNAMIC DIFFICULTY (ROBUST MULTI-THREAD + HASHRATE)
     // ============================================
     if role.is_authority() || force_authoring {
         use sp_consensus::{Environment, Proposer};
@@ -575,8 +742,16 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
         let miner_pair = get_or_create_miner_key(&miner_base_path);
         let miner_address: [u8; 32] = miner_pair.public().0;
+
         log::info!("💰 Mining rewards to: {}", miner_pair.public().to_ss58check());
-        log::info!("⛏️  Starting PoW miner with dynamic difficulty...");
+
+        let num_threads: usize = std::env::var("LUMENYX_MINING_THREADS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(num_cpus::get)
+            .max(1);
+
+        log::info!("⛏️  Starting PoW miner with {} threads...", num_threads);
 
         let mut proposer_factory = ProposerFactory::new(
             task_manager.spawn_handle(),
@@ -587,9 +762,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         );
 
         let mining_client = client.clone();
-        // Use PoW+TD wrapper for block import (same as import_queue)
         let block_import = pow_block_import.clone();
-        // Use TD-based select chain for mining parent selection
         let select_chain_mining = TotalDifficultySelectChain::new(select_chain.clone(), client.clone());
         let mining_sync_service = sync_service.clone();
         let mining_tx_pool = transaction_pool.clone();
@@ -598,13 +771,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             "pow-miner",
             Some("mining"),
             async move {
-                let mut interval = tokio::time::interval(Duration::from_millis(100)); // Check more frequently
+                let mut interval = tokio::time::interval(Duration::from_millis(100));
                 let mut consecutive_propose_failures: u32 = 0;
                 const MAX_FAILURES_BEFORE_POOL_CLEAR: u32 = 3;
                 let mut last_difficulty: u128 = FALLBACK_DIFFICULTY;
                 let mut blocks_since_difficulty_log: u32 = 0;
-                
-                // RX-LX: Initialize PoW engine
+
                 let get_block_hash = |height: u64| -> H256 {
                     let block_num: u32 = height as u32;
                     match mining_client.hash(block_num) {
@@ -612,7 +784,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                         _ => H256::zero(),
                     }
                 };
-                
+
                 let mut rx_lx_pow = match RxLxPow::new(0, &get_block_hash) {
                     Ok(pow) => pow,
                     Err(e) => {
@@ -621,7 +793,14 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     }
                 };
                 log::info!("⛏️  RX-LX PoW engine initialized!");
-                
+
+                let mut miner_state = MinerState::new(num_threads);
+
+                // Hashrate reporter
+                let mut last_report = tokio::time::Instant::now();
+                let mut last_total: u64 = 0;
+                let mut last_per_thread: Vec<u64> = vec![0; num_threads];
+
                 loop {
                     if mining_sync_service.is_major_syncing() {
                         log::debug!("⏸️  Syncing in progress...");
@@ -630,6 +809,34 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     }
 
                     interval.tick().await;
+
+                    // Print hashrate every ~5 seconds (not tied to block events)
+                    if last_report.elapsed() >= Duration::from_secs(5) {
+                        let dt = last_report.elapsed().as_secs_f64().max(0.001);
+
+                        let (total_now, per_now) = miner_state.snapshot_hash_counts();
+                        let total_hps = (total_now.saturating_sub(last_total) as f64) / dt;
+
+                        let mut per_hps = Vec::with_capacity(num_threads);
+                        for i in 0..num_threads {
+                            let hps = (per_now[i].saturating_sub(last_per_thread[i]) as f64) / dt;
+                            per_hps.push(hps);
+                        }
+
+                        // Keep the log readable: print total + per-thread in one line
+                        let per_str = per_hps
+                            .iter()
+                            .enumerate()
+                            .map(|(i, v)| format!("t{}={:.0} H/s", i, v))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+
+                        log::info!("⚙️ Hashrate total={:.0} H/s | {}", total_hps, per_str);
+
+                        last_report = tokio::time::Instant::now();
+                        last_total = total_now;
+                        last_per_thread = per_now;
+                    }
 
                     let best_header = match select_chain_mining.best_chain().await {
                         Ok(h) => h,
@@ -642,17 +849,16 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     let parent_hash = best_header.hash();
                     let parent_number = *best_header.number();
 
-                    // Read difficulty from runtime storage
-                    let difficulty = read_difficulty_from_storage(&*mining_client, parent_hash);
+                    // Read difficulty from best chain state (avoid discarded state)
+                    let best_hash = mining_client.info().best_hash;
+                    let difficulty = read_difficulty_from_storage(&*mining_client, best_hash);
                     let target = difficulty_to_target(difficulty);
-                    
-                    // Log difficulty changes
+
                     if difficulty != last_difficulty {
                         log::info!("⚡ Difficulty changed: {} -> {}", last_difficulty, difficulty);
                         last_difficulty = difficulty;
                     }
-                    
-                    // Log difficulty periodically (every 100 blocks)
+
                     blocks_since_difficulty_log += 1;
                     if blocks_since_difficulty_log >= 100 {
                         log::info!("📊 Current difficulty: {}", difficulty);
@@ -690,8 +896,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                         Ok(p) => p,
                         Err(e) => {
                             consecutive_propose_failures += 1;
-                            log::warn!("⚠️ Failed to propose block ({}/{}): {:?}",
-                                consecutive_propose_failures, MAX_FAILURES_BEFORE_POOL_CLEAR, e);
+                            log::warn!(
+                                "⚠️ Failed to propose block ({}/{}): {:?}",
+                                consecutive_propose_failures,
+                                MAX_FAILURES_BEFORE_POOL_CLEAR,
+                                e
+                            );
                             if consecutive_propose_failures >= MAX_FAILURES_BEFORE_POOL_CLEAR {
                                 log::warn!("🧹 Clearing transaction pool");
                                 let pending: Vec<_> = mining_tx_pool.ready().map(|tx| tx.hash.clone()).collect();
@@ -707,47 +917,64 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     let (block, storage_changes) = (proposal.block, proposal.storage_changes);
                     let (header, body) = block.deconstruct();
                     let header_hash = header.hash();
-                    
-                    // RX-LX: Check if seed needs to change
+
                     if let Err(e) = rx_lx_pow.maybe_reseed(parent_number as u64 + 1, &get_block_hash) {
                         log::error!("❌ RX-LX reseed failed: {}", e);
                         continue;
                     }
-                    
-                    let mut nonce = [0u8; 32];
-                    let seed = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos() as u64;
-                    nonce[0..8].copy_from_slice(&seed.to_le_bytes());
 
-                    let mut found = false;
-                    // More iterations for higher difficulty
-                    let max_iterations: u64 = 50_000_000;
-                    
-                    log::info!("⛏️ Mining #{} with difficulty={} target={:?}", parent_number + 1, difficulty, target);
-                    for _ in 0..max_iterations {
-                        for i in 0..32 {
-                            if nonce[i] == 255 { nonce[i] = 0; }
-                            else { nonce[i] += 1; break; }
-                        }
+                    let (job_id, parent_changed) = miner_state.next_job_id_if_parent_changed(parent_hash);
 
-                        let pow_hash = rx_lx_pow.hash(&header_hash, &nonce);
+                    if parent_changed {
+                        log::info!(
+                            "⛏️ Mining #{} with difficulty={} threads={}",
+                            parent_number + 1,
+                            difficulty,
+                            num_threads
+                        );
+                    }
 
-                        if hash_meets_target(&pow_hash, &target) {
-                            log::info!("🎯 Nonce found for #{}; difficulty={}, target={:?}, hash={:?}", parent_number + 1, difficulty, target, pow_hash);
+                    let seed_height = seed_sched::seed_height(parent_number as u64 + 1);
+
+                    let job = MiningJob {
+                        job_id,
+                        height: (parent_number as u64) + 1,
+                        parent_hash,
+                        header_hash,
+                        target,
+                        seed_height,
+                        seed: rx_lx_pow.seed,
+                    };
+                    let _ = miner_state.job_tx.send(job);
+
+                    let found = tokio::time::timeout(
+                        Duration::from_millis(TARGET_BLOCK_TIME_MS.saturating_sub(200)),
+                        miner_state.found_rx.recv(),
+                    ).await;
+
+                    match found {
+                        Ok(Some(found)) if found.job_id == job_id => {
+                            let nonce = found.nonce;
+                            let pow_hash = rx_lx_pow.hash(&header_hash, &nonce);
+
+                            log::info!(
+                                "🎯 Nonce found for #{}; difficulty={}, hash={:?}",
+                                parent_number + 1,
+                                difficulty,
+                                pow_hash
+                            );
+
                             let mut import_params = BlockImportParams::new(BlockOrigin::Own, header.clone());
-                            // Add PoW seal with nonce
                             let seal = sp_runtime::DigestItem::Seal(LUMENYX_ENGINE_ID, nonce.to_vec());
                             import_params.post_digests.push(seal);
                             import_params.body = Some(body.clone());
                             import_params.state_action = sc_consensus::StateAction::ApplyChanges(
                                 sc_consensus::StorageChanges::Changes(storage_changes)
                             );
-                            // fork_choice is decided by PowBlockImport based on Total Difficulty
 
                             match block_import.import_block(import_params).await {
                                 Ok(_) => {
+                                    mining_sync_service.announce_block(header_hash, None);
                                     log::info!(
                                         "✅ Block #{} mined! hash={:?} difficulty={}",
                                         parent_number + 1,
@@ -760,15 +987,14 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                                     log::error!("❌ Failed to import block: {:?}", e);
                                 }
                             }
-
-                            found = true;
-                            break;
                         }
-                    }
-
-                    if !found {
-                        log::debug!("⏳ No valid nonce found for block #{} (difficulty: {})", 
-                            parent_number + 1, difficulty);
+                        _ => {
+                            log::debug!(
+                                "⏳ No valid nonce found for block #{} (difficulty: {})",
+                                parent_number + 1,
+                                difficulty
+                            );
+                        }
                     }
                 }
             },

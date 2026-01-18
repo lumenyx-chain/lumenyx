@@ -78,6 +78,7 @@ fc-consensus = { git = "https://github.com/polkadot-evm/frontier", branch = "sta
 # LUMENYX
 lumenyx-runtime = { path = "../runtime" }
 lumenyx-primitives = { path = "../primitives" }
+num_cpus = "1.17.0"
 
 [build-dependencies]
 substrate-build-script-utils = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }

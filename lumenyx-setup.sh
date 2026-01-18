@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v1.9.29 - Simple & Clean (No root required)
+# LUMENYX SETUP SCRIPT v1.9.30 - Multi-threading Support
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
@@ -29,6 +29,9 @@ WS="ws://127.0.0.1:9944"
 RPC_TIMEOUT=5
 RPC_RETRIES=3
 
+# Mining threads (empty = auto/all cores)
+THREADS_FILE="$LUMENYX_DIR/mining_threads.conf"
+
 # Helpers
 HELPERS_DIR="$LUMENYX_DIR/helpers"
 SUBSTRATE_SEND_PY="$HELPERS_DIR/substrate_send.py"
@@ -53,7 +56,7 @@ version_gt() {
     local IFS='.'
     read -ra V1 <<< "$v1"
     read -ra V2 <<< "$v2"
-    
+
     local i
     for ((i=0; i<${#V1[@]} || i<${#V2[@]}; i++)); do
         local n1="${V1[i]:-0}"
@@ -147,6 +150,99 @@ ask_yes_no() {
             * ) echo "Please answer y or n";;
         esac
     done
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MINING THREADS FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+get_threads() {
+    if [[ -f "$THREADS_FILE" ]]; then
+        cat "$THREADS_FILE" 2>/dev/null | tr -d ' \t\r\n'
+    fi
+}
+
+get_threads_display() {
+    local t
+    t=$(get_threads)
+    if [[ -z "$t" ]]; then
+        echo "AUTO (all cores)"
+    else
+        echo "$t threads"
+    fi
+}
+
+set_threads_menu() {
+    local cores
+    cores=$(command -v nproc >/dev/null 2>&1 && nproc || echo 1)
+    
+    echo ""
+    echo -e "${CYAN}═══ SET MINING THREADS ═══${NC}"
+    echo ""
+    print_info "CPU cores detected: $cores"
+    echo ""
+    echo "  Current setting: $(get_threads_display)"
+    echo ""
+    echo "  Choose mining threads:"
+    echo ""
+    echo "    [0] Auto (use all $cores cores)"
+    echo "    [1] 1 thread"
+    echo "    [2] 2 threads"
+    echo "    [4] 4 threads"
+    echo "    [N] Custom number"
+    echo ""
+    read -r -p "  Selection (0/1/2/4/N): " sel
+
+    local t=""
+    case "$sel" in
+        0) t="";;
+        1) t="1";;
+        2) t="2";;
+        4) t="4";;
+        [Nn])
+            echo ""
+            read -r -p "  Enter threads (1-$cores): " t
+            ;;
+        *)
+            print_warning "Invalid choice. Keeping current setting."
+            return
+            ;;
+    esac
+
+    # Validate custom input
+    if [[ -n "$t" ]]; then
+        if ! echo "$t" | grep -Eq '^[0-9]+$'; then
+            print_error "Threads must be a number."
+            return
+        fi
+        if [[ "$t" -lt 1 ]]; then
+            print_error "Threads must be >= 1."
+            return
+        fi
+    fi
+
+    # Save setting
+    mkdir -p "$LUMENYX_DIR"
+    echo -n "$t" > "$THREADS_FILE"
+    
+    echo ""
+    if [[ -z "$t" ]]; then
+        print_ok "Mining threads set to AUTO (all $cores cores)."
+    else
+        print_ok "Mining threads set to $t."
+    fi
+
+    # Offer to restart if node is running
+    if node_running; then
+        echo ""
+        if ask_yes_no "Restart node to apply new thread setting?"; then
+            stop_node
+            sleep 2
+            start_node
+        else
+            print_info "New setting will apply on next restart."
+        fi
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -403,15 +499,15 @@ def main():
     try:
         head = substrate.get_block()
         current_block = head['header']['number']
-        
+
         transactions = []
         start_block = 1 if args.blocks == 0 else max(1, current_block - args.blocks)
-        
+
         for block_num in range(current_block, start_block - 1, -1):
             try:
                 block_hash = substrate.get_block_hash(block_num)
                 events = substrate.get_events(block_hash)
-                
+
                 for event in events:
                     if event.value.get('event_id') == 'Transfer' and event.value.get('module_id') == 'Balances':
                         attrs = event.value.get('attributes', {})
@@ -421,7 +517,7 @@ def main():
                             amount = int(attrs.get('amount', 0))
                         else:
                             continue
-                        
+
                         if from_addr == addr or to_addr == addr:
                             tx_type = "SENT" if from_addr == addr else "RECV"
                             human_amount = amount / (10 ** args.decimals)
@@ -434,12 +530,12 @@ def main():
                             })
             except Exception:
                 continue
-                
+
             if len(transactions) >= 20:
                 break
-        
+
         print(json.dumps({"ok": True, "transactions": transactions}))
-        
+
     except Exception as e:
         print(json.dumps({"ok": False, "error": str(e)}))
         sys.exit(1)
@@ -923,6 +1019,20 @@ start_node() {
     mkdir -p "$LUMENYX_DIR"
     touch "$LOG_FILE"
 
+    # Get mining threads setting
+    local threads
+    threads=$(get_threads)
+    
+    if [[ -n "$threads" ]]; then
+        export LUMENYX_MINING_THREADS="$threads"
+        print_info "Mining with $threads thread(s)"
+    else
+        unset LUMENYX_MINING_THREADS
+        local cores
+        cores=$(command -v nproc >/dev/null 2>&1 && nproc || echo "?")
+        print_info "Mining with AUTO threads (all $cores cores)"
+    fi
+
     print_info "Starting node..."
 
     nohup "$LUMENYX_DIR/$BINARY_NAME" \
@@ -995,13 +1105,13 @@ print_dashboard() {
     balance=$(get_balance)
     block_info=$(get_block)
     peers=$(get_peers)
-    
+
     # Parse block info: best|target|syncing
     local block target syncing block_display
     block=$(echo "$block_info" | cut -d'|' -f1)
     target=$(echo "$block_info" | cut -d'|' -f2)
     syncing=$(echo "$block_info" | cut -d'|' -f3)
-    
+
     if [[ "$block" == "offline" ]]; then
         block_display="#offline"
     elif [[ "$syncing" == "True" && "$target" -gt "$block" ]]; then
@@ -1018,6 +1128,10 @@ print_dashboard() {
         status_color="${GREEN}●"
     fi
 
+    # Get threads display
+    local threads_display
+    threads_display=$(get_threads_display)
+
     clear
     print_logo
     echo ""
@@ -1026,6 +1140,7 @@ print_dashboard() {
     echo -e "  Block:    $block_display"
     echo -e "  Status:   ${status_color} ${status}${NC}"
     echo -e "  Peers:    $peers"
+    echo -e "  Threads:  ${CYAN}$threads_display${NC}"
     echo ""
     echo "════════════════════════════════════════════════════════════════════"
 }
@@ -1041,13 +1156,14 @@ dashboard_loop() {
         echo "  [5] 📊 Live Logs"
         echo "  [6] 💰 Transaction History"
         echo "  [7] 🛠️  Useful Commands"
+        echo "  [8] ⚙️  Set Mining Threads"
         echo "  [0] 🚪 Exit"
         echo ""
         echo -e "  ${CYAN}Auto-refresh in 10s - Press a key to select${NC}"
         echo ""
 
         read -r -t 10 -n 1 choice || choice="refresh"
-        
+
         # Clear input buffer
         read -r -t 0.1 -n 10000 discard 2>/dev/null || true
 
@@ -1059,6 +1175,7 @@ dashboard_loop() {
             5) echo ""; echo "Loading..."; menu_logs ;;
             6) echo ""; echo "Loading..."; menu_tx_history ;;
             7) echo ""; echo "Loading..."; menu_commands ;;
+            8) echo ""; echo "Loading..."; set_threads_menu; wait_enter ;;
             0) echo ""; echo "Goodbye!"; exit 0 ;;
             refresh) ;;
             *) ;;
@@ -1198,7 +1315,7 @@ menu_tx_history() {
     if ! ask_yes_no "Show transaction history?"; then
         return
     fi
-    
+
     print_dashboard
     echo ""
     echo -e "${CYAN}═══ TRANSACTION HISTORY (sent/received) ═══${NC}"
@@ -1214,10 +1331,10 @@ menu_tx_history() {
     ensure_python_deps >/dev/null || { print_error "Python deps missing"; wait_enter; return; }
 
     print_info "Scanning recent blocks for transactions..."
-    
+
     local out
     out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 0 --decimals 12 2>&1 || true)
-    
+
     if echo "$out" | grep -q '"ok": true'; then
         echo "$out" | python3 -c 'import sys,json
 d=json.load(sys.stdin)
