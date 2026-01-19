@@ -583,10 +583,15 @@ get_address() {
     if [[ -f "$LUMENYX_DIR/wallet.txt" ]]; then
         grep "Address:" "$LUMENYX_DIR/wallet.txt" 2>/dev/null | awk '{print $2}'
     elif [[ -f "$DATA_DIR/miner-key" ]]; then
-        local seed
+        local seed addr
         seed=$(cat "$DATA_DIR/miner-key" 2>/dev/null)
         if [[ -n "$seed" ]] && [[ -f "$LUMENYX_DIR/$BINARY_NAME" ]]; then
-            "$LUMENYX_DIR/$BINARY_NAME" key inspect "0x$seed" 2>/dev/null | grep "SS58" | awk '{print $3}'
+            addr=$("$LUMENYX_DIR/$BINARY_NAME" key inspect "0x$seed" 2>/dev/null | grep "SS58" | awk '{print $3}')
+            if [[ -n "$addr" ]]; then
+                # Auto-create wallet.txt so balance works
+                echo "Address: $addr" > "$LUMENYX_DIR/wallet.txt"
+                echo "$addr"
+            fi
         fi
     fi
 }
