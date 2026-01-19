@@ -12,7 +12,7 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
-use codec::{Encode, Decode};
+use codec::{Decode, Encode};
 extern crate alloc;
 use alloc::vec::Vec;
 
@@ -20,8 +20,10 @@ use sp_api::impl_runtime_apis;
 use sp_core::{crypto::KeyTypeId, OpaqueMetadata, H160, H256, U256};
 use sp_runtime::{
     generic, impl_opaque_keys,
-    traits::{BlakeTwo256, Block as BlockT, DispatchInfoOf, Dispatchable, IdentifyAccount,
-             NumberFor, PostDispatchInfoOf, Verify, OpaqueKeys},
+    traits::{
+        BlakeTwo256, Block as BlockT, DispatchInfoOf, Dispatchable, IdentifyAccount, NumberFor,
+        OpaqueKeys, PostDispatchInfoOf, Verify,
+    },
     transaction_validity::{TransactionSource, TransactionValidity, TransactionValidityError},
     ApplyExtrinsicResult, MultiSignature, Permill,
 };
@@ -32,7 +34,7 @@ use frame_support::{
     construct_runtime, derive_impl,
     genesis_builder_helper::{build_state, get_preset},
     parameter_types,
-    traits::{ConstU32, ConstU64, ConstU8, ConstU128, FindAuthor, OnFinalize, ConstBool},
+    traits::{ConstBool, ConstU128, ConstU32, ConstU64, ConstU8, FindAuthor, OnFinalize},
     weights::{constants::WEIGHT_REF_TIME_PER_SECOND, Weight},
 };
 use pallet_transaction_payment::FungibleAdapter;
@@ -60,13 +62,17 @@ impl MinerAddressDigest {
 // FRONTIER EVM IMPORTS
 // ============================================
 use fp_rpc::TransactionStatus;
-use pallet_ethereum::{Call::transact, PostLogContent, Transaction as EthereumTransaction, TransactionAction, TransactionData};
-use pallet_evm::{Precompile,
-    Account as EVMAccount, EnsureAddressTruncated, FeeCalculator, HashedAddressMapping, Runner,
+use pallet_ethereum::{
+    Call::transact, PostLogContent, Transaction as EthereumTransaction, TransactionAction,
+    TransactionData,
+};
+use pallet_evm::{
+    Account as EVMAccount, EnsureAddressTruncated, FeeCalculator, HashedAddressMapping, Precompile,
+    Runner,
 };
 
 // Import our primitives
-pub use lumenyx_primitives::{BLOCK_TIME_MS, BLOCKS_PER_DAY, BLOCKS_PER_YEAR};
+pub use lumenyx_primitives::{BLOCKS_PER_DAY, BLOCKS_PER_YEAR, BLOCK_TIME_MS};
 use pallet_evm_bridge;
 
 pub type BlockNumber = u32;
@@ -184,7 +190,11 @@ parameter_types! {
 }
 
 pub struct ToAuthor;
-impl frame_support::traits::OnUnbalanced<frame_support::traits::fungible::Credit<AccountId, Balances>> for ToAuthor {
+impl
+    frame_support::traits::OnUnbalanced<
+        frame_support::traits::fungible::Credit<AccountId, Balances>,
+    > for ToAuthor
+{
     fn on_nonzero_unbalanced(credit: frame_support::traits::fungible::Credit<AccountId, Balances>) {
         use frame_support::traits::fungible::Balanced;
         if let Some(author) = pallet_authorship::Pallet::<Runtime>::author() {
@@ -269,10 +279,8 @@ impl pallet_evm_bridge::Config for Runtime {
 
 pub const GAS_PER_SECOND: u64 = 40_000_000;
 
-pub const MAXIMUM_BLOCK_WEIGHT: Weight = Weight::from_parts(
-    WEIGHT_REF_TIME_PER_SECOND * 12 / 10,
-    u64::MAX,
-);
+pub const MAXIMUM_BLOCK_WEIGHT: Weight =
+    Weight::from_parts(WEIGHT_REF_TIME_PER_SECOND * 12 / 10, u64::MAX);
 
 parameter_types! {
     pub BlockGasLimit: U256 = U256::from(
@@ -301,8 +309,15 @@ impl<R> LumenyxPrecompiles<R> {
 
     pub fn used_addresses() -> [H160; 9] {
         [
-            hash(1), hash(2), hash(3), hash(4), hash(5),
-            hash(6), hash(7), hash(8), hash(9),
+            hash(1),
+            hash(2),
+            hash(3),
+            hash(4),
+            hash(5),
+            hash(6),
+            hash(7),
+            hash(8),
+            hash(9),
         ]
     }
 }
@@ -315,7 +330,10 @@ impl<R> pallet_evm::PrecompileSet for LumenyxPrecompiles<R>
 where
     R: pallet_evm::Config,
 {
-    fn execute(&self, handle: &mut impl pallet_evm::PrecompileHandle) -> Option<pallet_evm::PrecompileResult> {
+    fn execute(
+        &self,
+        handle: &mut impl pallet_evm::PrecompileHandle,
+    ) -> Option<pallet_evm::PrecompileResult> {
         let address = handle.code_address();
         if address == hash(1) {
             Some(<pallet_evm_precompile_simple::ECRecover as Precompile>::execute(handle))
@@ -361,7 +379,11 @@ impl FeeCalculator for BaseFeeAsGasPrice {
 
 /// Handler for EVM base fee - sends 100% to block author (miner)
 pub struct EvmBaseFeeToAuthor;
-impl frame_support::traits::OnUnbalanced<frame_support::traits::fungible::Credit<AccountId, Balances>> for EvmBaseFeeToAuthor {
+impl
+    frame_support::traits::OnUnbalanced<
+        frame_support::traits::fungible::Credit<AccountId, Balances>,
+    > for EvmBaseFeeToAuthor
+{
     fn on_nonzero_unbalanced(credit: frame_support::traits::fungible::Credit<AccountId, Balances>) {
         use frame_support::traits::fungible::Balanced;
         // Send base fee to block author (miner) - 100% to miner, no burn
@@ -385,7 +407,7 @@ impl<F: FindAuthor<AccountId>> FindAuthor<H160> for FindAuthorTruncated<F> {
 }
 
 impl pallet_evm::Config for Runtime {
-    type FeeCalculator = BaseFeeAsGasPrice;  // Dynamic EIP-1559 base fee
+    type FeeCalculator = BaseFeeAsGasPrice; // Dynamic EIP-1559 base fee
     type GasWeightMapping = pallet_evm::FixedGasWeightMapping<Self>;
     type WeightPerGas = WeightPerGas;
     type BlockHashMapping = pallet_ethereum::EthereumBlockHashMapping<Self>;
@@ -399,7 +421,7 @@ impl pallet_evm::Config for Runtime {
     type ChainId = ChainId;
     type BlockGasLimit = BlockGasLimit;
     type Runner = pallet_evm::runner::stack::Runner<Self>;
-    type OnChargeTransaction = pallet_evm::EVMFungibleAdapter<Balances, EvmBaseFeeToAuthor>;  // 100% fees to miner
+    type OnChargeTransaction = pallet_evm::EVMFungibleAdapter<Balances, EvmBaseFeeToAuthor>; // 100% fees to miner
     type OnCreate = ();
     type FindAuthor = FindAuthorTruncated<PowAuthorFinder>;
     type GasLimitPovSizeRatio = ConstU64<4>;
@@ -429,9 +451,15 @@ parameter_types! {
 
 pub struct BaseFeeThreshold;
 impl pallet_base_fee::BaseFeeThreshold for BaseFeeThreshold {
-    fn lower() -> Permill { Permill::zero() }
-    fn ideal() -> Permill { Permill::from_parts(500_000) }
-    fn upper() -> Permill { Permill::from_parts(1_000_000) }
+    fn lower() -> Permill {
+        Permill::zero()
+    }
+    fn ideal() -> Permill {
+        Permill::from_parts(500_000)
+    }
+    fn upper() -> Permill {
+        Permill::from_parts(1_000_000)
+    }
 }
 
 impl pallet_base_fee::Config for Runtime {
@@ -458,9 +486,16 @@ pub type SignedExtra = (
     frame_system::CheckWeight<Runtime>,
     pallet_transaction_payment::ChargeTransactionPayment<Runtime>,
 );
-pub type UncheckedExtrinsic = fp_self_contained::UncheckedExtrinsic<Address, RuntimeCall, Signature, SignedExtra>;
+pub type UncheckedExtrinsic =
+    fp_self_contained::UncheckedExtrinsic<Address, RuntimeCall, Signature, SignedExtra>;
 pub type SignedPayload = generic::SignedPayload<RuntimeCall, SignedExtra>;
-pub type Executive = frame_executive::Executive<Runtime, Block, frame_system::ChainContext<Runtime>, Runtime, AllPalletsWithSystem>;
+pub type Executive = frame_executive::Executive<
+    Runtime,
+    Block,
+    frame_system::ChainContext<Runtime>,
+    Runtime,
+    AllPalletsWithSystem,
+>;
 
 construct_runtime!(
     pub struct Runtime {
@@ -519,7 +554,9 @@ impl fp_self_contained::SelfContainedCall for RuntimeCall {
         len: usize,
     ) -> Option<Result<(), TransactionValidityError>> {
         match self {
-            RuntimeCall::Ethereum(call) => call.pre_dispatch_self_contained(info, dispatch_info, len),
+            RuntimeCall::Ethereum(call) => {
+                call.pre_dispatch_self_contained(info, dispatch_info, len)
+            }
             _ => None,
         }
     }
@@ -530,7 +567,9 @@ impl fp_self_contained::SelfContainedCall for RuntimeCall {
     ) -> Option<sp_runtime::DispatchResultWithInfo<PostDispatchInfoOf<Self>>> {
         match self {
             call @ RuntimeCall::Ethereum(pallet_ethereum::Call::transact { .. }) => {
-                Some(call.dispatch(RuntimeOrigin::from(pallet_ethereum::RawOrigin::EthereumTransaction(info))))
+                Some(call.dispatch(RuntimeOrigin::from(
+                    pallet_ethereum::RawOrigin::EthereumTransaction(info),
+                )))
             }
             _ => None,
         }
@@ -884,7 +923,10 @@ impl<B> Default for TransactionConverter<B> {
     }
 }
 
-impl<B: sp_runtime::traits::Block> fp_rpc::ConvertTransaction<<B as sp_runtime::traits::Block>::Extrinsic> for TransactionConverter<B> {
+impl<B: sp_runtime::traits::Block>
+    fp_rpc::ConvertTransaction<<B as sp_runtime::traits::Block>::Extrinsic>
+    for TransactionConverter<B>
+{
     fn convert_transaction(
         &self,
         transaction: pallet_ethereum::Transaction,

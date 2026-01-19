@@ -2,43 +2,51 @@
 //!
 //! PoW consensus with on-chain difficulty adjustment.
 
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use sc_network::NetworkBlock;
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
-use sp_core::{sr25519, Pair, crypto::Ss58Codec, H256, U256, storage::StorageKey};
+use codec::{Decode, Encode};
+use sp_core::{crypto::Ss58Codec, sr25519, storage::StorageKey, Pair, H256, U256};
 use sp_runtime::generic::DigestItem;
-use codec::{Encode, Decode};
 
 use futures::StreamExt;
-use tokio::sync::{watch, mpsc};
+use tokio::sync::{mpsc, watch};
 
 use lumenyx_runtime::{self, opaque::Block, RuntimeApi};
-use sc_client_api::{BlockBackend, BlockchainEvents, AuxStore, HeaderBackend, StorageProvider};
-use sc_consensus::{BlockImportParams, import_queue::Verifier, BlockImport};
+use sc_client_api::{AuxStore, BlockBackend, BlockchainEvents, HeaderBackend, StorageProvider};
+use sc_consensus::{import_queue::Verifier, BlockImport, BlockImportParams};
 use sc_executor::WasmExecutor;
 use sc_service::{
-    error::Error as ServiceError, Configuration, TaskManager, TFullBackend, TFullClient,
+    error::Error as ServiceError, Configuration, TFullBackend, TFullClient, TaskManager,
 };
-use sc_transaction_pool_api::TransactionPool;
 use sc_telemetry::{Telemetry, TelemetryWorker};
+use sc_transaction_pool_api::TransactionPool;
+use sp_api::ProvideRuntimeApi;
 use sp_consensus::{BlockOrigin, SelectChain, SyncOracle};
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT};
-use sp_api::ProvideRuntimeApi;
 
 // RX-LX imports
-use rx_lx::{Flags, Cache, Vm};
+use rx_lx::{Cache, Flags, Vm};
 
 use crate::rx_lx::seed as seed_sched;
 
 // PoW BlockImport wrapper with TD tracking
 #[path = "pow_import.rs"]
 mod pow_import;
+
+use crate::pool::gossip::{spawn_pool_gossip_task, PoolGossip, POOL_PROTO_NAME};
+use crate::pool::pplns::compute_pplns_payouts;
+use crate::pool::sharechain::Sharechain;
+use crate::pool::types::PoolShare;
+use crate::pool::{MAX_POOL_PAYOUTS, PPLNS_WINDOW_SHARES, SHARE_DIFFICULTY_DIVISOR};
 use pow_import::{LumenyxPowBlockImport, TotalDifficultySelectChain};
 
 // Frontier imports
-use fc_mapping_sync::{EthereumBlockNotificationSinks, EthereumBlockNotification, SyncStrategy, kv::MappingSyncWorker};
+use fc_mapping_sync::{
+    kv::MappingSyncWorker, EthereumBlockNotification, EthereumBlockNotificationSinks, SyncStrategy,
+};
 use fc_rpc::EthTask;
 use fc_rpc_core::types::{FeeHistoryCache, FeeHistoryCacheLimit, FilterPool};
 use fc_storage::StorageOverrideHandler;
@@ -59,6 +67,31 @@ pub struct FrontierPartialComponents {
 }
 
 const TARGET_BLOCK_TIME_MS: u64 = 2500;
+const SHARE_STALE_DEPTH: u64 = 4; // accept shares up to N ancestors behind best tip
+
+fn is_recent_parent<C>(client: &C, share_parent: H256, best_hash: H256, max_depth: u64) -> bool
+where
+    C: HeaderBackend<Block>,
+{
+    if share_parent == best_hash {
+        return true;
+    }
+    let mut cur = best_hash;
+    for _ in 0..max_depth {
+        let Ok(Some(hdr)) = client.header(cur) else {
+            break;
+        };
+        let p = *hdr.parent_hash();
+        if p == share_parent {
+            return true;
+        }
+        if p == H256::zero() {
+            break;
+        }
+        cur = p;
+    }
+    false
+}
 
 // Fallback difficulty if we can't read from runtime
 const FALLBACK_DIFFICULTY: u128 = 1; // Backup - genesis should set this
@@ -72,6 +105,15 @@ struct MinerAddressDigest {
     miner: [u8; 32],
 }
 
+/// Pool payout digest structure
+#[derive(Clone, codec::Encode, codec::Decode)]
+struct PoolPayoutDigest {
+    sharechain_tip: H256,
+    block_reward: u128,
+    payouts: Vec<([u8; 32], u128)>,
+}
+
+const POOL_PAYOUT_DIGEST_TAG: &[u8; 4] = b"PPLN";
 /// Generate storage key for Difficulty::CurrentDifficulty
 fn difficulty_storage_key() -> StorageKey {
     // twox_128("Difficulty") ++ twox_128("CurrentDifficulty")
@@ -173,13 +215,22 @@ impl RxLxPow {
         let seed_height = seed_sched::seed_height(height);
         let seed = seed_sched::get_seed(height, &get_block_hash);
 
-        log::info!("🔧 Initializing RX-LX cache with seed from block #{}", seed_height);
+        log::info!(
+            "🔧 Initializing RX-LX cache with seed from block #{}",
+            seed_height
+        );
         cache.init(seed.as_ref());
 
         let vm = Vm::light(flags, &cache).map_err(|e| format!("VM creation failed: {:?}", e))?;
         log::info!("✅ RX-LX initialized successfully");
 
-        Ok(Self { flags, cache, vm, seed_height, seed })
+        Ok(Self {
+            flags,
+            cache,
+            vm,
+            seed_height,
+            seed,
+        })
     }
 
     /// Check if seed changed and reinitialize if needed
@@ -193,10 +244,15 @@ impl RxLxPow {
         }
 
         let new_seed = seed_sched::get_seed(height, &get_block_hash);
-        log::info!("🔄 RX-LX seed change: block #{} -> #{}", self.seed_height, new_seed_height);
+        log::info!(
+            "🔄 RX-LX seed change: block #{} -> #{}",
+            self.seed_height,
+            new_seed_height
+        );
 
         self.cache.init(new_seed.as_ref());
-        self.vm = Vm::light(self.flags, &self.cache).map_err(|e| format!("VM recreation failed: {:?}", e))?;
+        self.vm = Vm::light(self.flags, &self.cache)
+            .map_err(|e| format!("VM recreation failed: {:?}", e))?;
 
         self.seed_height = new_seed_height;
         self.seed = new_seed;
@@ -223,6 +279,7 @@ struct MiningJob {
     parent_hash: H256,
     header_hash: H256,
     target: H256,
+    share_target: H256,
     seed_height: u64,
     seed: H256,
 }
@@ -233,12 +290,21 @@ struct FoundNonce {
     nonce: [u8; 32],
 }
 
+#[derive(Clone, Debug)]
+struct FoundShare {
+    job_id: u64,
+    height: u64,
+    parent_hash: H256,
+    nonce: [u8; 32],
+}
+
 // ----------------------------
 // Persistent miner state (+ hashrate counters)
 // ----------------------------
 struct MinerState {
     job_tx: watch::Sender<MiningJob>,
     found_rx: mpsc::UnboundedReceiver<FoundNonce>,
+    found_share_rx: mpsc::UnboundedReceiver<FoundShare>,
     job_id: u64,
     last_parent_hash: Option<H256>,
 
@@ -255,19 +321,26 @@ impl MinerState {
             parent_hash: H256::zero(),
             header_hash: H256::zero(),
             target: H256::repeat_byte(0xff),
+            share_target: H256::repeat_byte(0xff),
             seed_height: 0,
             seed: H256::zero(),
         };
 
         let (job_tx, job_rx) = watch::channel(dummy_job);
         let (found_tx, found_rx) = mpsc::unbounded_channel::<FoundNonce>();
+        let (found_share_tx, found_share_rx) = mpsc::unbounded_channel::<FoundShare>();
 
         let total_hashes = Arc::new(AtomicU64::new(0));
-        let per_thread_hashes = Arc::new((0..num_threads).map(|_| AtomicU64::new(0)).collect::<Vec<_>>());
+        let per_thread_hashes = Arc::new(
+            (0..num_threads)
+                .map(|_| AtomicU64::new(0))
+                .collect::<Vec<_>>(),
+        );
 
         for thread_id in 0..num_threads {
             let mut job_rx = job_rx.clone();
             let found_tx = found_tx.clone();
+            let found_share_tx = found_share_tx.clone();
 
             let total_hashes = total_hashes.clone();
             let per_thread_hashes = per_thread_hashes.clone();
@@ -310,7 +383,11 @@ impl MinerState {
                             match rx_lx::Vm::light(flags, &cache) {
                                 Ok(vm) => vm_opt = Some(vm),
                                 Err(e) => {
-                                    log::error!("Worker {}: VM creation failed: {:?}", thread_id, e);
+                                    log::error!(
+                                        "Worker {}: VM creation failed: {:?}",
+                                        thread_id,
+                                        e
+                                    );
                                     vm_opt = None;
                                     continue;
                                 }
@@ -330,12 +407,17 @@ impl MinerState {
 
                             let header_hash = job.header_hash;
                             let target = job.target;
+                            let share_target = job.share_target;
 
                             for _ in 0..CHUNK_ITERS {
                                 // increment nonce
                                 for i in 0..32 {
-                                    if local_nonce[i] == 255 { local_nonce[i] = 0; }
-                                    else { local_nonce[i] += 1; break; }
+                                    if local_nonce[i] == 255 {
+                                        local_nonce[i] = 0;
+                                    } else {
+                                        local_nonce[i] += 1;
+                                        break;
+                                    }
                                 }
 
                                 // input = header_hash || nonce
@@ -349,6 +431,16 @@ impl MinerState {
                                 per_thread_hashes[thread_id].fetch_add(1, Ordering::Relaxed);
                                 total_hashes.fetch_add(1, Ordering::Relaxed);
 
+                                // Check for share first (easier target)
+                                if pow_hash <= share_target {
+                                    let _ = found_share_tx.send(FoundShare {
+                                        job_id: job.job_id,
+                                        height: job.height,
+                                        parent_hash: job.parent_hash,
+                                        nonce: local_nonce,
+                                    });
+                                }
+                                // Check for block (harder target)
                                 if pow_hash <= target {
                                     let _ = found_tx.send(FoundNonce {
                                         job_id: job.job_id,
@@ -366,6 +458,7 @@ impl MinerState {
         Self {
             job_tx,
             found_rx,
+            found_share_rx,
             job_id: 0,
             last_parent_hash: None,
             total_hashes,
@@ -386,7 +479,8 @@ impl MinerState {
 
     fn snapshot_hash_counts(&self) -> (u64, Vec<u64>) {
         let total = self.total_hashes.load(Ordering::Relaxed);
-        let per = self.per_thread_hashes
+        let per = self
+            .per_thread_hashes
             .iter()
             .map(|c| c.load(Ordering::Relaxed))
             .collect::<Vec<_>>();
@@ -408,9 +502,15 @@ const POW_LIMIT: H256 = H256::repeat_byte(0xff);
 
 fn difficulty_to_target(difficulty: u128) -> H256 {
     let mut d = difficulty;
-    if d < MIN_DIFFICULTY { d = MIN_DIFFICULTY; }
-    if d > MAX_DIFFICULTY { d = MAX_DIFFICULTY; }
-    if d == 0 { d = MIN_DIFFICULTY; }
+    if d < MIN_DIFFICULTY {
+        d = MIN_DIFFICULTY;
+    }
+    if d > MAX_DIFFICULTY {
+        d = MAX_DIFFICULTY;
+    }
+    if d == 0 {
+        d = MIN_DIFFICULTY;
+    }
 
     let pow_u = U256::from_big_endian(POW_LIMIT.as_fixed_bytes());
 
@@ -448,9 +548,13 @@ impl Verifier<Block> for RxLxVerifier {
         let mut moved: Vec<DigestItem> = Vec::new();
 
         block.header.digest_mut().logs.retain(|item| {
-            let dominated = item.as_pre_runtime().map(|(id, _)| id == LUMENYX_ENGINE_ID).unwrap_or(false);
+            let dominated = item
+                .as_pre_runtime()
+                .map(|(id, _)| id == LUMENYX_ENGINE_ID)
+                .unwrap_or(false);
             let is_seal = matches!(item, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID);
-            let is_consensus = matches!(item, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID);
+            let is_consensus =
+                matches!(item, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID);
 
             if dominated {
                 return true;
@@ -468,8 +572,8 @@ impl Verifier<Block> for RxLxVerifier {
         }
 
         block.post_digests.retain(|d| {
-            !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID) &&
-            !matches!(d, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID)
+            !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID)
+                && !matches!(d, DigestItem::Consensus(id, _) if *id == LUMENYX_ENGINE_ID)
         });
         block.post_digests.extend(moved);
 
@@ -496,7 +600,10 @@ pub fn new_partial(
     >,
     ServiceError,
 > {
-    let network_path = config.network.net_config_path.clone()
+    let network_path = config
+        .network
+        .net_config_path
+        .clone()
         .unwrap_or_else(|| config.base_path.config_dir(config.chain_spec.id()))
         .join("network");
     let _ = std::fs::create_dir_all(&network_path);
@@ -521,15 +628,18 @@ pub fn new_partial(
 
     let executor = sc_service::new_wasm_executor::<sp_io::SubstrateHostFunctions>(&config.executor);
 
-    let (client, backend, keystore_container, task_manager) = sc_service::new_full_parts::<Block, RuntimeApi, _>(
-        config,
-        telemetry.as_ref().map(|(_, telemetry)| telemetry.handle()),
-        executor,
-    )?;
+    let (client, backend, keystore_container, task_manager) =
+        sc_service::new_full_parts::<Block, RuntimeApi, _>(
+            config,
+            telemetry.as_ref().map(|(_, telemetry)| telemetry.handle()),
+            executor,
+        )?;
     let client = Arc::new(client);
 
     let telemetry = telemetry.map(|(worker, telemetry)| {
-        task_manager.spawn_handle().spawn("telemetry", None, worker.run());
+        task_manager
+            .spawn_handle()
+            .spawn("telemetry", None, worker.run());
         telemetry
     });
 
@@ -554,11 +664,13 @@ pub fn new_partial(
         config.prometheus_registry(),
     );
 
-    let frontier_backend = Arc::new(FrontierBackend::KeyValue(Arc::new(fc_db::kv::Backend::open(
-        Arc::clone(&client),
-        &config.database,
-        &db_config_dir(&config),
-    )?)));
+    let frontier_backend = Arc::new(FrontierBackend::KeyValue(Arc::new(
+        fc_db::kv::Backend::open(
+            Arc::clone(&client),
+            &config.database,
+            &db_config_dir(&config),
+        )?,
+    )));
 
     let frontier_partial = FrontierPartialComponents {
         filter_pool: Some(Arc::new(std::sync::Mutex::new(BTreeMap::new()))),
@@ -574,11 +686,17 @@ pub fn new_partial(
         select_chain,
         import_queue,
         transaction_pool,
-        other: (client, telemetry, frontier_backend, frontier_partial, pow_block_import),
+        other: (
+            client,
+            telemetry,
+            frontier_backend,
+            frontier_partial,
+            pow_block_import,
+        ),
     })
 }
 
-pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
+pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, ServiceError> {
     let sc_service::PartialComponents {
         client,
         backend,
@@ -590,12 +708,33 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         other: (_, mut telemetry, frontier_backend, frontier_partial, pow_block_import),
     } = new_partial(&config)?;
 
-    let net_config = sc_network::config::FullNetworkConfiguration::<
+    let mut net_config = sc_network::config::FullNetworkConfiguration::<
         Block,
         <Block as BlockT>::Hash,
         sc_network::NetworkWorker<Block, <Block as BlockT>::Hash>,
     >::new(&config.network, config.prometheus_registry().cloned());
 
+    // P2Pool: Register pool protocol if pool_mode
+    let pool_notification_service = if pool_mode {
+        let pool_protocol: sc_network::ProtocolName = POOL_PROTO_NAME.into();
+        let (pool_config, pool_notif_service) = sc_network::config::NonDefaultSetConfig::new(
+            pool_protocol.clone(),
+            vec![],
+            1024 * 1024,
+            None,
+            sc_network::config::SetConfig {
+                in_peers: 25,
+                out_peers: 25,
+                reserved_nodes: vec![],
+                non_reserved_mode: sc_network::config::NonReservedPeerMode::Accept,
+            },
+        );
+        net_config.add_notification_protocol(pool_config);
+        log::info!("🏊 Pool protocol registered: {}", POOL_PROTO_NAME);
+        Some(pool_notif_service)
+    } else {
+        None
+    };
     let metrics = sc_network::NotificationMetrics::new(config.prometheus_registry());
 
     let (network, system_rpc_tx, tx_handler_controller, network_starter, sync_service) =
@@ -611,6 +750,15 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             block_relay: None,
             metrics,
         })?;
+    // P2Pool: Spawn gossip task
+    let mut pool_gossip = if let Some(notif_service) = pool_notification_service {
+        log::info!("🏊 Starting pool gossip task...");
+        let gossip = spawn_pool_gossip_task(notif_service, task_manager.spawn_handle());
+        log::info!("🏊 Pool gossip task started!");
+        Some(gossip)
+    } else {
+        None
+    };
 
     let role = config.role;
     let force_authoring = config.force_authoring;
@@ -626,7 +774,9 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         prometheus_registry.clone(),
     ));
 
-    let pubsub_notification_sinks: Arc<EthereumBlockNotificationSinks<EthereumBlockNotification<Block>>> = Default::default();
+    let pubsub_notification_sinks: Arc<
+        EthereumBlockNotificationSinks<EthereumBlockNotification<Block>>,
+    > = Default::default();
 
     match &*frontier_backend {
         fc_db::Backend::KeyValue(b) => {
@@ -645,7 +795,8 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     SyncStrategy::Normal,
                     sync_service.clone(),
                     pubsub_notification_sinks.clone(),
-                ).for_each(|()| futures::future::ready(())),
+                )
+                .for_each(|()| futures::future::ready(())),
             );
         }
     }
@@ -687,7 +838,10 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 enable_dev_signer: false,
                 network: network.clone(),
                 sync: sync_service.clone(),
-                frontier_backend: match &*frontier_backend { fc_db::Backend::KeyValue(b) => b.clone(), _ => unreachable!(), },
+                frontier_backend: match &*frontier_backend {
+                    fc_db::Backend::KeyValue(b) => b.clone(),
+                    _ => unreachable!(),
+                },
                 storage_override: storage_override.clone(),
                 block_data_cache: block_data_cache.clone(),
                 filter_pool: filter_pool.clone(),
@@ -713,7 +867,8 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 deps,
                 subscription_task_executor,
                 pubsub_notification_sinks.clone(),
-            ).map_err(Into::into)
+            )
+            .map_err(Into::into)
         })
     };
 
@@ -736,14 +891,17 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     // POW MINING WITH DYNAMIC DIFFICULTY (ROBUST MULTI-THREAD + HASHRATE)
     // ============================================
     if role.is_authority() || force_authoring {
-        use sp_consensus::{Environment, Proposer};
         use sc_basic_authorship::ProposerFactory;
+        use sp_consensus::{Environment, Proposer};
         use sp_inherents::InherentDataProvider;
 
         let miner_pair = get_or_create_miner_key(&miner_base_path);
         let miner_address: [u8; 32] = miner_pair.public().0;
 
-        log::info!("💰 Mining rewards to: {}", miner_pair.public().to_ss58check());
+        log::info!(
+            "💰 Mining rewards to: {}",
+            miner_pair.public().to_ss58check()
+        );
 
         let num_threads: usize = std::env::var("LUMENYX_MINING_THREADS")
             .ok()
@@ -763,7 +921,8 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
         let mining_client = client.clone();
         let block_import = pow_block_import.clone();
-        let select_chain_mining = TotalDifficultySelectChain::new(select_chain.clone(), client.clone());
+        let select_chain_mining =
+            TotalDifficultySelectChain::new(select_chain.clone(), client.clone());
         let mining_sync_service = sync_service.clone();
         let mining_tx_pool = transaction_pool.clone();
 
@@ -795,6 +954,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                 log::info!("⛏️  RX-LX PoW engine initialized!");
 
                 let mut miner_state = MinerState::new(num_threads);
+                let sharechain = std::sync::Arc::new(std::sync::Mutex::new(Sharechain::new()));
 
                 // Hashrate reporter
                 let mut last_report = tokio::time::Instant::now();
@@ -853,6 +1013,8 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                     let best_hash = mining_client.info().best_hash;
                     let difficulty = read_difficulty_from_storage(&*mining_client, best_hash);
                     let target = difficulty_to_target(difficulty);
+                    let share_difficulty = (difficulty / SHARE_DIFFICULTY_DIVISOR).max(1);
+                    let share_target = difficulty_to_target(share_difficulty);
 
                     if difficulty != last_difficulty {
                         log::info!("⚡ Difficulty changed: {} -> {}", last_difficulty, difficulty);
@@ -942,6 +1104,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                         parent_hash,
                         header_hash,
                         target,
+                        share_target,
                         seed_height,
                         seed: rx_lx_pow.seed,
                     };
@@ -964,7 +1127,68 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                                 pow_hash
                             );
 
+                            // -------------------- P2Pool PPLNS payout digest --------------------
+                            let mut pool_payout_digest_item: Option<sp_runtime::generic::DigestItem> = None;
+
+                            if pool_mode {
+                                let block_u32: u32 = parent_number + 1;
+                                let block_reward: u128 = lumenyx_primitives::calculate_block_reward(block_u32);
+
+                                if block_reward > 0 {
+                                    let (tip, window_shares) = {
+                                        let sc = sharechain.lock().expect("sharechain mutex poisoned");
+                                        let tip = sc.best_tip().unwrap_or(sp_core::H256::zero());
+                                        let shares = if tip == sp_core::H256::zero() {
+                                            Vec::new()
+                                        } else {
+                                            sc.walk_back(tip, crate::pool::PPLNS_WINDOW_SHARES)
+                                        };
+                                        (tip, shares)
+                                    };
+
+                                    if !window_shares.is_empty() {
+                                        let payouts_entries = crate::pool::pplns::compute_pplns_payouts(
+                                            &window_shares,
+                                            block_reward,
+                                            crate::pool::MAX_POOL_PAYOUTS,
+                                        );
+
+                                        let mut payouts: Vec<([u8; 32], u128)> = payouts_entries
+                                            .into_iter()
+                                            .map(|e| (e.account, e.amount))
+                                            .collect();
+
+                                        payouts.sort_by(|a, b| a.0.cmp(&b.0));
+
+                                        let payout_digest = PoolPayoutDigest {
+                                            sharechain_tip: tip,
+                                            block_reward,
+                                            payouts,
+                                        };
+
+                                        let mut payload = Vec::new();
+                                        payload.extend_from_slice(POOL_PAYOUT_DIGEST_TAG);
+                                        payload.extend(payout_digest.encode());
+
+                                        pool_payout_digest_item = Some(sp_runtime::generic::DigestItem::Other(payload));
+
+                                        log::info!(
+                                            "🏊 PPLNS digest prepared: tip={:?} reward={} payouts={}",
+                                            tip,
+                                            block_reward,
+                                            payout_digest.payouts.len()
+                                        );
+                                    }
+                                }
+                            }
+                            // -------------------------------------------------------------------
+
                             let mut import_params = BlockImportParams::new(BlockOrigin::Own, header.clone());
+
+                            if let Some(di) = pool_payout_digest_item {
+                                import_params.post_digests.push(di);
+                            }
+
                             let seal = sp_runtime::DigestItem::Seal(LUMENYX_ENGINE_ID, nonce.to_vec());
                             import_params.post_digests.push(seal);
                             import_params.body = Some(body.clone());
@@ -994,6 +1218,71 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
                                 parent_number + 1,
                                 difficulty
                             );
+                        }
+                    }
+                    // ═══════════════════════════════════════════════════════════════════
+                    // P2POOL: Process shares and gossip (stale-tolerant)
+                    // ═══════════════════════════════════════════════════════════════════
+                    if pool_mode {
+                        // 1) Receive shares from peers
+                        if let Some(ref mut gossip) = pool_gossip.as_mut() {
+                            loop {
+                                match gossip.rx_in.try_recv() {
+                                    Ok(remote_share) => {
+                                        sharechain.lock().unwrap().insert(remote_share);
+                                    }
+                                    Err(mpsc::error::TryRecvError::Empty) => break,
+                                    Err(mpsc::error::TryRecvError::Disconnected) => break,
+                                }
+                            }
+                        }
+                        // 2) Drain local shares from workers (accept even if job_id changed)
+                        loop {
+                            match miner_state.found_share_rx.try_recv() {
+                                Ok(share_found) => {
+                                    let best_hash_now = mining_client.info().best_hash;
+                                    let fresh = is_recent_parent(
+                                        &*mining_client,
+                                        share_found.parent_hash,
+                                        best_hash_now,
+                                        SHARE_STALE_DEPTH,
+                                    );
+                                    log::info!(
+                                        "🏊 Share from worker: job={} height={} parent={:?} fresh={} (current_job={})",
+                                        share_found.job_id,
+                                        share_found.height,
+                                        share_found.parent_hash,
+                                        fresh,
+                                        job_id
+                                    );
+                                    if !fresh {
+                                        continue;
+                                    }
+                                    let pool_share = PoolShare {
+                                        id: H256::zero(),
+                                        prev: sharechain.lock().unwrap().best_tip().unwrap_or(H256::zero()),
+                                        main_parent: share_found.parent_hash,
+                                        miner: miner_address,
+                                        share_difficulty,
+                                        nonce: share_found.nonce,
+                                        timestamp_ms: std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_millis() as u64,
+                                    };
+                                    let share_with_id = PoolShare {
+                                        id: pool_share.compute_id(),
+                                        ..pool_share
+                                    };
+                                    sharechain.lock().unwrap().insert(share_with_id.clone());
+                                    if let Some(ref gossip) = pool_gossip {
+                                        let _ = gossip.tx_out.send(share_with_id.clone());
+                                        log::info!("🏊 Share accepted+broadcast id={:?}", share_with_id.id);
+                                    }
+                                }
+                                Err(mpsc::error::TryRecvError::Empty) => break,
+                                Err(mpsc::error::TryRecvError::Disconnected) => break,
+                            }
                         }
                     }
                 }

@@ -7,12 +7,12 @@
 //! - Distribution: 100% through mining
 //! - No pre-allocations. Pure fair launch.
 
+use frame_support::PalletId;
+use lumenyx_runtime::{AccountId, Signature, WASM_BINARY};
 use sc_service::ChainType;
 use sp_core::{sr25519, Pair, Public};
-use sp_runtime::traits::{IdentifyAccount, Verify};
-use lumenyx_runtime::{AccountId, Signature, WASM_BINARY};
-use frame_support::PalletId;
 use sp_runtime::traits::AccountIdConversion;
+use sp_runtime::traits::{IdentifyAccount, Verify};
 
 pub type ChainSpec = sc_service::GenericChainSpec;
 
@@ -21,7 +21,8 @@ pub type ChainSpec = sc_service::GenericChainSpec;
 // ============================================
 
 /// Genesis block message - The reason LUMENYX exists
-pub const GENESIS_MESSAGE: &str = "Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you.";
+pub const GENESIS_MESSAGE: &str =
+    "Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you.";
 
 /// Network properties
 pub const TOKEN_DECIMALS: u32 = 12;
@@ -50,9 +51,7 @@ where
 // DEVELOPMENT CONFIG (for testing)
 // ============================================
 
-fn development_genesis(
-    endowed_accounts: Vec<AccountId>,
-) -> serde_json::Value {
+fn development_genesis(endowed_accounts: Vec<AccountId>) -> serde_json::Value {
     serde_json::json!({
         "balances": {
             "balances": endowed_accounts.iter().cloned().map(|k| (k, 1u128 << 60)).collect::<Vec<_>>(),
@@ -81,14 +80,12 @@ pub fn development_config() -> Result<ChainSpec, String> {
     .with_name("LUMENYX Development")
     .with_id("lumenyx_dev")
     .with_chain_type(ChainType::Development)
-    .with_genesis_config_patch(development_genesis(
-        vec![
-            get_account_id_from_seed::<sr25519::Public>("Alice"),
-            get_account_id_from_seed::<sr25519::Public>("Bob"),
-            get_account_id_from_seed::<sr25519::Public>("Alice//stash"),
-            get_account_id_from_seed::<sr25519::Public>("Bob//stash"),
-        ],
-    ))
+    .with_genesis_config_patch(development_genesis(vec![
+        get_account_id_from_seed::<sr25519::Public>("Alice"),
+        get_account_id_from_seed::<sr25519::Public>("Bob"),
+        get_account_id_from_seed::<sr25519::Public>("Alice//stash"),
+        get_account_id_from_seed::<sr25519::Public>("Bob//stash"),
+    ]))
     .with_properties(chain_properties())
     .with_boot_nodes(vec![])
     .build())
@@ -106,14 +103,12 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
     .with_name("LUMENYX Local Testnet")
     .with_id("lumenyx_local_testnet")
     .with_chain_type(ChainType::Local)
-    .with_genesis_config_patch(development_genesis(
-        vec![
-            get_account_id_from_seed::<sr25519::Public>("Alice"),
-            get_account_id_from_seed::<sr25519::Public>("Bob"),
-            get_account_id_from_seed::<sr25519::Public>("Charlie"),
-            get_account_id_from_seed::<sr25519::Public>("Dave"),
-        ],
-    ))
+    .with_genesis_config_patch(development_genesis(vec![
+        get_account_id_from_seed::<sr25519::Public>("Alice"),
+        get_account_id_from_seed::<sr25519::Public>("Bob"),
+        get_account_id_from_seed::<sr25519::Public>("Charlie"),
+        get_account_id_from_seed::<sr25519::Public>("Dave"),
+    ]))
     .with_properties(chain_properties())
     .with_boot_nodes(vec![])
     .build())
@@ -203,4 +198,3 @@ fn chain_properties() -> serde_json::Map<String, serde_json::Value> {
     properties.insert("genesisMessage".into(), GENESIS_MESSAGE.into());
     properties
 }
-

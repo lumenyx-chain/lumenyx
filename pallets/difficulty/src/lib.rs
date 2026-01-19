@@ -126,7 +126,10 @@ pub mod pallet {
                 LastEffectiveTimeMs::<T>::put(0);
                 Anchor::<T>::kill(); // Ensure clean state
                 Initialized::<T>::put(true);
-                log::info!("🎯 Difficulty initialized at genesis: {}", self.initial_difficulty);
+                log::info!(
+                    "🎯 Difficulty initialized at genesis: {}",
+                    self.initial_difficulty
+                );
             } else {
                 log::info!("✅ Difficulty already initialized, skipping genesis init");
             }
@@ -171,9 +174,9 @@ pub mod pallet {
                 prev_eff_ms = now_ms.saturating_sub(TARGET_BLOCK_TIME_MS);
                 LastEffectiveTimeMs::<T>::put(prev_eff_ms);
             }
-            
+
             let mut solve_ms = now_ms.saturating_sub(prev_eff_ms);
-            
+
             // Clamp solve time to prevent timestamp manipulation
             if solve_ms < MIN_SOLVE_TIME_MS {
                 solve_ms = MIN_SOLVE_TIME_MS;
@@ -189,7 +192,10 @@ pub mod pallet {
             let old_difficulty = match CurrentDifficulty::<T>::get() {
                 Some(d) => d,
                 None => {
-                    log::warn!("⚠️ CurrentDifficulty storage missing! Initializing to {}", INITIAL_DIFFICULTY);
+                    log::warn!(
+                        "⚠️ CurrentDifficulty storage missing! Initializing to {}",
+                        INITIAL_DIFFICULTY
+                    );
                     CurrentDifficulty::<T>::put(INITIAL_DIFFICULTY);
                     Initialized::<T>::put(true);
                     INITIAL_DIFFICULTY
@@ -223,7 +229,8 @@ pub mod pallet {
             };
 
             // 5) Calculate next difficulty using ASERT
-            let new_difficulty = Self::calculate_asert_difficulty(&anchor, block_number, eff_now_ms);
+            let new_difficulty =
+                Self::calculate_asert_difficulty(&anchor, block_number, eff_now_ms);
 
             // 6) Update storage
             CurrentDifficulty::<T>::put(new_difficulty);
@@ -248,7 +255,11 @@ pub mod pallet {
                         "⚡ Difficulty: {} -> {} ({}% change)",
                         old_difficulty,
                         new_difficulty,
-                        if new_difficulty > old_difficulty { "+" } else { "-" }
+                        if new_difficulty > old_difficulty {
+                            "+"
+                        } else {
+                            "-"
+                        }
                     );
                 }
             }
@@ -294,11 +305,10 @@ pub mod pallet {
             // If blocks are too fast: ideal > real → positive exponent → difficulty increases
             // If blocks are too slow: ideal < real → negative exponent → difficulty decreases
             let ideal_minus_real: i128 = ideal_time_ms.saturating_sub(real_time_ms);
-            
+
             // Convert to fixed-point for precision
-            let exponent_fixed: i128 = ideal_minus_real
-                .saturating_mul(RADIX)
-                / (HALF_LIFE_MS as i128);
+            let exponent_fixed: i128 =
+                ideal_minus_real.saturating_mul(RADIX) / (HALF_LIFE_MS as i128);
 
             // Calculate 2^exponent using aserti3-2d approximation
             let (num_shifts, factor_q16) = Self::approx_pow2_fixed(exponent_fixed);
@@ -367,7 +377,8 @@ pub mod pallet {
             let b: u128 = 971_821_376u128;
             let c: u128 = 5_127u128;
 
-            let poly = a.saturating_mul(x)
+            let poly = a
+                .saturating_mul(x)
                 .saturating_add(b.saturating_mul(x2))
                 .saturating_add(c.saturating_mul(x3))
                 .saturating_add(1u128 << 47);

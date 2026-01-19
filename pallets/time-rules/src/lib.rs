@@ -89,8 +89,8 @@ pub mod pallet {
 mod tests {
     use super::*;
     use frame_support::{assert_noop, assert_ok, derive_impl};
-    use sp_runtime::BuildStorage;
     use sp_runtime::traits::IdentityLookup;
+    use sp_runtime::BuildStorage;
 
     type Block = frame_system::mocking::MockBlock<Test>;
 

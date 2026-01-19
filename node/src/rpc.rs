@@ -25,8 +25,8 @@ use sp_runtime::traits::Block as BlockT;
 
 // Frontier imports
 use fc_rpc::{
-    Eth, EthApiServer, EthFilter, EthFilterApiServer, EthPubSub, EthPubSubApiServer,
-    Net, NetApiServer, Web3, Web3ApiServer, TxPool, TxPoolApiServer,
+    Eth, EthApiServer, EthFilter, EthFilterApiServer, EthPubSub, EthPubSubApiServer, Net,
+    NetApiServer, TxPool, TxPoolApiServer, Web3, Web3ApiServer,
 };
 use fc_rpc_core::types::{FeeHistoryCache, FilterPool};
 use fc_storage::StorageOverride;
@@ -131,7 +131,12 @@ where
     use substrate_frame_rpc_system::{System, SystemApiServer};
 
     let mut io = RpcModule::new(());
-    let FullDeps { client, pool, deny_unsafe, eth } = deps;
+    let FullDeps {
+        client,
+        pool,
+        deny_unsafe,
+        eth,
+    } = deps;
 
     // Substrate standard RPCs
     io.merge(System::new(client.clone(), pool.clone()).into_rpc())?;

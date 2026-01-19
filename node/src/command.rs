@@ -56,30 +56,46 @@ pub fn run() -> sc_cli::Result<()> {
         Some(Subcommand::CheckBlock(cmd)) => {
             let runner = cli.create_runner(cmd)?;
             runner.async_run(|config| {
-                let PartialComponents { client, task_manager, import_queue, .. } =
-                    service::new_partial(&config)?;
+                let PartialComponents {
+                    client,
+                    task_manager,
+                    import_queue,
+                    ..
+                } = service::new_partial(&config)?;
                 Ok((cmd.run(client, import_queue), task_manager))
             })
         }
         Some(Subcommand::ExportBlocks(cmd)) => {
             let runner = cli.create_runner(cmd)?;
             runner.async_run(|config| {
-                let PartialComponents { client, task_manager, .. } = service::new_partial(&config)?;
+                let PartialComponents {
+                    client,
+                    task_manager,
+                    ..
+                } = service::new_partial(&config)?;
                 Ok((cmd.run(client, config.database), task_manager))
             })
         }
         Some(Subcommand::ExportState(cmd)) => {
             let runner = cli.create_runner(cmd)?;
             runner.async_run(|config| {
-                let PartialComponents { client, task_manager, .. } = service::new_partial(&config)?;
+                let PartialComponents {
+                    client,
+                    task_manager,
+                    ..
+                } = service::new_partial(&config)?;
                 Ok((cmd.run(client, config.chain_spec), task_manager))
             })
         }
         Some(Subcommand::ImportBlocks(cmd)) => {
             let runner = cli.create_runner(cmd)?;
             runner.async_run(|config| {
-                let PartialComponents { client, task_manager, import_queue, .. } =
-                    service::new_partial(&config)?;
+                let PartialComponents {
+                    client,
+                    task_manager,
+                    import_queue,
+                    ..
+                } = service::new_partial(&config)?;
                 Ok((cmd.run(client, import_queue), task_manager))
             })
         }
@@ -90,8 +106,12 @@ pub fn run() -> sc_cli::Result<()> {
         Some(Subcommand::Revert(cmd)) => {
             let runner = cli.create_runner(cmd)?;
             runner.async_run(|config| {
-                let PartialComponents { client, task_manager, backend, .. } =
-                    service::new_partial(&config)?;
+                let PartialComponents {
+                    client,
+                    task_manager,
+                    backend,
+                    ..
+                } = service::new_partial(&config)?;
                 Ok((cmd.run(client, backend, None), task_manager))
             })
         }
@@ -105,13 +125,20 @@ pub fn run() -> sc_cli::Result<()> {
                 Ok(Some(bp)) => bp,
                 _ => sc_service::BasePath::from_project("", "", "lumenyx-node"),
             };
-            let chain_id = cli.run.shared_params.chain_id(cli.run.shared_params.is_dev());
+            let chain_id = cli
+                .run
+                .shared_params
+                .chain_id(cli.run.shared_params.is_dev());
             let chain_folder = match chain_id.as_str() {
                 "dev" => "lumenyx_dev",
                 "local" => "lumenyx_local_testnet",
                 _ => "lumenyx_mainnet",
             };
-            let network_path = base_path.path().join("chains").join(chain_folder).join("network");
+            let network_path = base_path
+                .path()
+                .join("chains")
+                .join(chain_folder)
+                .join("network");
             let _ = std::fs::create_dir_all(&network_path);
             let secret_key_path = network_path.join("secret_ed25519");
             if !secret_key_path.exists() {
@@ -119,9 +146,13 @@ pub fn run() -> sc_cli::Result<()> {
                 let keypair = sp_core::ed25519::Pair::generate().0;
                 let _ = std::fs::write(&secret_key_path, keypair.to_raw_vec());
             }
+
+            // Capture pool_mode flag
+            let pool_mode = cli.pool_mode;
+
             let runner = cli.create_runner(&cli.run)?;
             runner.run_node_until_exit(|config| async move {
-                service::new_full(config).map_err(sc_cli::Error::Service)
+                service::new_full(config, pool_mode).map_err(sc_cli::Error::Service)
             })
         }
     }

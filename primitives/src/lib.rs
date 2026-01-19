@@ -127,7 +127,10 @@ mod tests {
     fn test_block_reward() {
         assert_eq!(calculate_block_reward(0), BLOCK_REWARD);
         assert_eq!(calculate_block_reward(BLOCKS_PER_HALVING), BLOCK_REWARD / 2);
-        assert_eq!(calculate_block_reward(BLOCKS_PER_HALVING * 2), BLOCK_REWARD / 4);
+        assert_eq!(
+            calculate_block_reward(BLOCKS_PER_HALVING * 2),
+            BLOCK_REWARD / 4
+        );
     }
 
     #[test]

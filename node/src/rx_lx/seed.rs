@@ -1,5 +1,5 @@
 //! RX-LX Seed Schedule
-//! 
+//!
 //! Implements Monero-style seed rotation for RandomX-LUMENYX.
 //! Seed changes every N blocks with D blocks delay for security.
 

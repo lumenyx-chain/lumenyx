@@ -27,6 +27,7 @@ sc-service = { git = "https://github.com/paritytech/polkadot-sdk", branch = "sta
 sc-executor = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sc-network = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sc-network-sync = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
+sc-network-types = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sc-consensus = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sc-consensus-aura = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }
 sc-client-api = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409" }

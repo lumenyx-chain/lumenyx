@@ -7,6 +7,10 @@ pub struct Cli {
 
     #[clap(flatten)]
     pub run: RunCmd,
+
+    /// Enable decentralized pool mode (P2Pool-like)
+    #[arg(long)]
+    pub pool_mode: bool,
 }
 
 #[derive(Debug, clap::Subcommand)]

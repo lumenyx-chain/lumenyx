@@ -1043,6 +1043,7 @@ start_node() {
     nohup "$LUMENYX_DIR/$BINARY_NAME" \
         --chain mainnet \
         --validator \
+        $(pool_is_enabled && echo "--pool-mode") \
         --rpc-cors all \
         --unsafe-rpc-external \
         --rpc-methods Unsafe \
@@ -1097,6 +1098,89 @@ stop_node() {
 # DASHBOARD (Auto-refresh)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POOL MODE FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+POOL_CONF="$LUMENYX_DIR/pool.conf"
+
+pool_is_enabled() {
+    [ -f "$POOL_CONF" ] && grep -q '^POOL_MODE=1' "$POOL_CONF"
+}
+
+pool_enable() {
+    mkdir -p "$LUMENYX_DIR"
+    cat > "$POOL_CONF" <<EOF
+# LUMENYX Pool Configuration
+POOL_MODE=1
+EOF
+    print_ok "Pool mode ENABLED"
+    echo ""
+    echo -e "${YELLOW}⚠️  You must restart mining for changes to take effect${NC}"
+}
+
+pool_disable() {
+    rm -f "$POOL_CONF"
+    print_ok "Pool mode DISABLED"
+    echo ""
+    echo -e "${YELLOW}⚠️  You must restart mining for changes to take effect${NC}"
+}
+
+menu_pool() {
+    clear
+    print_logo
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}                    🏊 MINING POOL SETTINGS                        ${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    if pool_is_enabled; then
+        echo -e "  Status: ${GREEN}● POOL MODE ENABLED${NC}"
+        echo ""
+        echo "  Your node will:"
+        echo "    • Share mining work with other pool miners"
+        echo "    • Receive proportional rewards based on your hashrate"
+        echo "    • Connect to other --pool-mode nodes automatically"
+    else
+        echo -e "  Status: ${CYAN}○ SOLO MODE (default)${NC}"
+        echo ""
+        echo "  Your node will:"
+        echo "    • Mine blocks independently"
+        echo "    • Receive 100% of block rewards when you find a block"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}───────────────────────────────────────────────────────────────────${NC}"
+    echo ""
+    
+    if pool_is_enabled; then
+        echo -e "${YELLOW}Pool mode is currently ENABLED${NC}"
+        echo ""
+        if ask_yes_no "Disable pool mode and switch to solo mining?"; then
+            pool_disable
+        else
+            echo "Cancelled."
+        fi
+    else
+        echo -e "${CYAN}Pool mode is currently DISABLED (solo mining)${NC}"
+        echo ""
+        echo "Enabling pool mode will:"
+        echo "  • Share your hashrate with the decentralized pool"
+        echo "  • Get smaller but more frequent rewards"
+        echo "  • Reduce reward variance (less luck-dependent)"
+        echo ""
+        if ask_yes_no "Enable pool mode?"; then
+            pool_enable
+        else
+            echo "Cancelled."
+        fi
+    fi
+    
+    wait_enter
+}
+
 print_dashboard() {
     local addr short_addr
     addr=$(get_address)
@@ -1129,7 +1213,7 @@ print_dashboard() {
     local status="STOPPED"
     local status_color="${RED}○"
     if node_running; then
-        status="MINING"
+        status="MINING"; if pool_is_enabled; then status="MINING (POOL)"; else status="MINING (SOLO)"; fi
         status_color="${GREEN}●"
     fi
 
@@ -1162,6 +1246,7 @@ dashboard_loop() {
         echo "  [6] 💰 Transaction History"
         echo "  [7] 🛠️  Useful Commands"
         echo "  [8] ⚙️  Set Mining Threads"
+        echo "  [9] 🏊 Mining Pool"
         echo "  [0] 🚪 Exit"
         echo ""
         echo -e "  ${CYAN}Auto-refresh in 10s - Press a key to select${NC}"
@@ -1181,6 +1266,7 @@ dashboard_loop() {
             6) echo ""; echo "Loading..."; menu_tx_history ;;
             7) echo ""; echo "Loading..."; menu_commands ;;
             8) echo ""; echo "Loading..."; set_threads_menu; wait_enter ;;
+            9) echo ""; echo "Loading..."; menu_pool ;;
             0) echo ""; echo "Goodbye!"; exit 0 ;;
             refresh) ;;
             *) ;;

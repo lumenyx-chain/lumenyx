@@ -90,11 +90,7 @@ impl Cache {
     /// Initialize cache with a key (seed)
     pub fn init(&mut self, key: &[u8]) {
         unsafe {
-            randomx_init_cache(
-                self.ptr,
-                key.as_ptr() as *const _,
-                key.len(),
-            );
+            randomx_init_cache(self.ptr, key.as_ptr() as *const _, key.len());
         }
     }
 
@@ -184,9 +180,7 @@ unsafe impl Send for Vm {}
 impl Vm {
     /// Create a VM for light mode (verification) - uses cache only
     pub fn light(flags: Flags, cache: &Cache) -> Result<Self> {
-        let ptr = unsafe {
-            randomx_create_vm(flags.raw(), cache.as_ptr(), ptr::null_mut())
-        };
+        let ptr = unsafe { randomx_create_vm(flags.raw(), cache.as_ptr(), ptr::null_mut()) };
         if ptr.is_null() {
             return Err(RxLxError::VmCreationFailed);
         }
@@ -371,7 +365,10 @@ mod golden_tests {
         let hash1 = hasher1.hash(input);
         let hash2 = hasher2.hash(input);
 
-        assert_ne!(hash1, hash2, "Different seeds must produce different hashes!");
+        assert_ne!(
+            hash1, hash2,
+            "Different seeds must produce different hashes!"
+        );
     }
 }
 
@@ -387,12 +384,12 @@ mod consensus_tests {
         let mut cache = Cache::alloc(flags).expect("Failed to alloc cache");
         let seed = b"RX-LX-CONSENSUS-TEST-SEED-v1";
         cache.init(seed);
-        
+
         let vm = Vm::light(flags, &cache).expect("Failed to create VM");
-        
+
         let mut hashes = HashSet::new();
         let mut first_run = Vec::new();
-        
+
         // First run: compute 10,000 hashes
         for i in 0u64..10_000 {
             let input = format!("consensus-test-input-{:08}", i);
@@ -400,47 +397,50 @@ mod consensus_tests {
             first_run.push(hash);
             hashes.insert(hash);
         }
-        
+
         // All hashes should be unique (collision resistance)
         assert_eq!(hashes.len(), 10_000, "Hash collision detected!");
-        
+
         // Second run: verify determinism
         for i in 0u64..10_000 {
             let input = format!("consensus-test-input-{:08}", i);
             let hash = vm.hash(input.as_bytes());
-            assert_eq!(hash, first_run[i as usize], 
-                "Determinism failure at input {}", i);
+            assert_eq!(
+                hash, first_run[i as usize],
+                "Determinism failure at input {}",
+                i
+            );
         }
-        
+
         println!("✓ 10,000 hashes: all unique and deterministic");
     }
-    
+
     /// Test consensus: verify hash of known inputs
     #[test]
     fn test_consensus_known_vectors() {
         let flags = Flags::recommended();
         let mut cache = Cache::alloc(flags).expect("Failed to alloc cache");
         cache.init(b"RX-LX-KNOWN-VECTORS");
-        
+
         let vm = Vm::light(flags, &cache).expect("Failed to create VM");
-        
+
         // Test vector 1: empty input
         let hash1 = vm.hash(b"");
         println!("Empty input hash: {}", hex::encode(hash1));
-        
+
         // Test vector 2: "LUMENYX"
         let hash2 = vm.hash(b"LUMENYX");
         println!("LUMENYX hash: {}", hex::encode(hash2));
-        
+
         // Test vector 3: block header simulation
         let hash3 = vm.hash(b"block:1:prev_hash:0000000000:nonce:12345678");
         println!("Block header hash: {}", hex::encode(hash3));
-        
+
         // Verify they're all different
         assert_ne!(hash1, hash2);
         assert_ne!(hash2, hash3);
         assert_ne!(hash1, hash3);
-        
+
         println!("✓ Known vectors: all unique");
     }
 }

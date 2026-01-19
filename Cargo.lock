@@ -4678,6 +4678,7 @@ dependencies = [
  "sc-keystore",
  "sc-network",
  "sc-network-sync",
+ "sc-network-types",
  "sc-offchain",
  "sc-rpc",
  "sc-rpc-api",
@@ -5786,6 +5787,7 @@ dependencies = [
  "lumenyx-primitives",
  "parity-scale-codec",
  "scale-info",
+ "sp-core",
  "sp-runtime",
  "sp-std",
 ]

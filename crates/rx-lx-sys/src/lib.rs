@@ -3,7 +3,7 @@
 //! Low-level unsafe bindings to the RandomX C API.
 //! This crate provides the foundation for RX-LX PoW algorithm.
 
-use libc::{c_void, size_t, c_ulong};
+use libc::{c_ulong, c_void, size_t};
 
 /// Opaque type for RandomX cache
 #[repr(C)]
@@ -45,11 +45,7 @@ extern "C" {
     pub fn randomx_alloc_cache(flags: randomx_flags) -> *mut randomx_cache;
 
     /// Initialize cache with a key
-    pub fn randomx_init_cache(
-        cache: *mut randomx_cache,
-        key: *const c_void,
-        key_size: size_t,
-    );
+    pub fn randomx_init_cache(cache: *mut randomx_cache, key: *const c_void, key_size: size_t);
 
     /// Release cache memory
     pub fn randomx_release_cache(cache: *mut randomx_cache);
@@ -79,16 +75,10 @@ extern "C" {
     ) -> *mut randomx_vm;
 
     /// Set VM cache (for light mode)
-    pub fn randomx_vm_set_cache(
-        machine: *mut randomx_vm,
-        cache: *mut randomx_cache,
-    );
+    pub fn randomx_vm_set_cache(machine: *mut randomx_vm, cache: *mut randomx_cache);
 
     /// Set VM dataset (for fast mode)
-    pub fn randomx_vm_set_dataset(
-        machine: *mut randomx_vm,
-        dataset: *mut randomx_dataset,
-    );
+    pub fn randomx_vm_set_dataset(machine: *mut randomx_vm, dataset: *mut randomx_dataset);
 
     /// Destroy a virtual machine
     pub fn randomx_destroy_vm(machine: *mut randomx_vm);
@@ -117,10 +107,7 @@ extern "C" {
     );
 
     /// Calculate hash (last in batch)
-    pub fn randomx_calculate_hash_last(
-        machine: *mut randomx_vm,
-        output: *mut c_void,
-    );
+    pub fn randomx_calculate_hash_last(machine: *mut randomx_vm, output: *mut c_void);
 }
 
 /// Hash output size in bytes (256 bits)

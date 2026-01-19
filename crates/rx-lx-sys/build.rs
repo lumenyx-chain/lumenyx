@@ -9,8 +9,14 @@ fn main() {
         .build();
 
     // Directory dove CMake mette le librerie
-    println!("cargo:rustc-link-search=native={}", dst.join("lib").display());
-    println!("cargo:rustc-link-search=native={}", dst.join("build").display());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        dst.join("lib").display()
+    );
+    println!(
+        "cargo:rustc-link-search=native={}",
+        dst.join("build").display()
+    );
 
     // Link della libreria RandomX (static)
     println!("cargo:rustc-link-lib=static=randomx");
