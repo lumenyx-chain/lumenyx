@@ -1,2 +1,2 @@
--e # CHAIN RESTARTING - New bootnodes coming soon
+# CHAIN RESTARTING - New bootnodes coming soon
 # Check BitcoinTalk for updates
