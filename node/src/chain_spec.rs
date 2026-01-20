@@ -125,17 +125,12 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 /// 1. Run: ./lumenyx-node --chain mainnet --mine
 /// 2. That's it! You're mining LUMENYX.
 fn mainnet_genesis() -> serde_json::Value {
-    // Faucet allocation: 5000 LUMENYX for bootstrap
-    let faucet_pallet_id: PalletId = PalletId(*b"valifauc");
-    let faucet_account: AccountId = faucet_pallet_id.into_account_truncating();
-    // 5000 LUMENYX = 5_000_000_000_000_000 planck (12 decimals)
-    let genesis_allocations: Vec<(AccountId, u128)> = vec![
-        (faucet_account, 5_000_000_000_000_000), // 5000 LUMENYX for faucet
-    ];
+    // 100% Fair Launch - Zero pre-allocation
+    // All LUMENYX distributed through mining rewards only
 
     serde_json::json!({
         "balances": {
-            "balances": genesis_allocations,
+            "balances": Vec::<(AccountId, u128)>::new(),
         },
         "difficulty": {
             "initialDifficulty": 2
