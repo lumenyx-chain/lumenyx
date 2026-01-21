@@ -6,8 +6,8 @@
 
 set -e
 
-VERSION="2.1.3"
-SCRIPT_VERSION="2.1.3"
+VERSION="2.1.4"
+SCRIPT_VERSION="2.1.4"
 
 # Colors
 RED='\033[0;31m'
@@ -846,13 +846,24 @@ step_install() {
 
     mkdir -p "$LUMENYX_DIR"
 
+    # Check if binary exists and verify version
     if [[ -f "$LUMENYX_DIR/$BINARY_NAME" ]]; then
-        print_ok "Binary already exists"
-        wait_enter
-        return
+        local current_version
+        current_version=$("$LUMENYX_DIR/$BINARY_NAME" --version 2>/dev/null | awk '{print $2}' || echo "unknown")
+        
+        if [[ "$current_version" == "$VERSION" ]]; then
+            print_ok "Binary v$VERSION already installed"
+            wait_enter
+            return
+        else
+            echo -e "${YELLOW}Binary update needed: v$current_version → v$VERSION${NC}"
+            echo ""
+            print_info "Downloading lumenyx-node v$VERSION (~65MB)..."
+        fi
+    else
+        print_info "Downloading lumenyx-node v$VERSION (~65MB)..."
     fi
-
-    print_info "Downloading lumenyx-node (~65MB)..."
+    
     echo ""
 
     if curl -L -o "$LUMENYX_DIR/$BINARY_NAME" "$BINARY_URL" --progress-bar; then
@@ -875,7 +886,7 @@ step_install() {
     fi
 
     chmod +x "$LUMENYX_DIR/$BINARY_NAME"
-    print_ok "Binary ready: $LUMENYX_DIR/$BINARY_NAME"
+    print_ok "Binary ready: $LUMENYX_DIR/$BINARY_NAME (v$VERSION)"
     wait_enter
 }
 
