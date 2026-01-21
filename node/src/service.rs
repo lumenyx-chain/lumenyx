@@ -1183,22 +1183,25 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                             }
                             // -------------------------------------------------------------------
 
-                            let mut import_params = BlockImportParams::new(BlockOrigin::Own, header.clone());
-
+                            // PPLNS digest in header (runtime reads frame_system::digest().logs)
+                            let mut final_header = header.clone();
                             if let Some(di) = pool_payout_digest_item {
-                                import_params.post_digests.push(di);
+                                final_header.digest_mut().logs.push(di);
                             }
-
+                            
+                            let mut import_params = BlockImportParams::new(BlockOrigin::Own, final_header);
+                            
+                            // Seal in post_digests (pow_import.rs expects it here)
                             let seal = sp_runtime::DigestItem::Seal(LUMENYX_ENGINE_ID, nonce.to_vec());
                             import_params.post_digests.push(seal);
                             import_params.body = Some(body.clone());
                             import_params.state_action = sc_consensus::StateAction::ApplyChanges(
                                 sc_consensus::StorageChanges::Changes(storage_changes)
                             );
-
+                            
                             match block_import.import_block(import_params).await {
                                 Ok(_) => {
-                                    mining_sync_service.announce_block(header_hash, None);
+                                    // announce_block disabled - rely on import notifications
                                     log::info!(
                                         "✅ Block #{} mined! hash={:?} difficulty={}",
                                         parent_number + 1,
