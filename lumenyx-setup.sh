@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v2.1.2 - 24/7 Daemon Mode + UI Improvements
+# LUMENYX SETUP SCRIPT v2.1.5 - Auto Binary Update Fix
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
-VERSION="2.1.4"
-SCRIPT_VERSION="2.1.4"
+VERSION="2.1.5"
+SCRIPT_VERSION="2.1.5"
 
 # Colors
 RED='\033[0;31m'
@@ -117,6 +117,76 @@ check_for_updates() {
             print_info "Skipping update..."
             sleep 1
         fi
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BINARY VERSION CHECK (runs even when skipping clean install)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+check_binary_update() {
+    # Only check if binary exists
+    if [[ ! -f "$LUMENYX_DIR/$BINARY_NAME" ]]; then
+        return 0
+    fi
+
+    local current_version
+    current_version=$("$LUMENYX_DIR/$BINARY_NAME" --version 2>/dev/null | awk '{print $2}' || echo "unknown")
+
+    # If version matches, nothing to do
+    if [[ "$current_version" == "$VERSION" ]]; then
+        return 0
+    fi
+
+    # Version mismatch - need to update
+    clear
+    print_logo
+    echo -e "${YELLOW}╔════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║                  BINARY UPDATE AVAILABLE                           ║${NC}"
+    echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  Current binary: ${RED}v$current_version${NC}"
+    echo -e "  Latest version: ${GREEN}v$VERSION${NC}"
+    echo ""
+
+    if ask_yes_no "Update binary to v$VERSION?"; then
+        echo ""
+        print_info "Downloading lumenyx-node v$VERSION (~65MB)..."
+        echo ""
+
+        # Stop node if running (to allow binary replacement)
+        if node_running; then
+            print_info "Stopping node for update..."
+            stop_node
+            sleep 2
+        fi
+
+        if curl -L -o "$LUMENYX_DIR/$BINARY_NAME" "$BINARY_URL" --progress-bar; then
+            echo ""
+            print_ok "Download complete"
+
+            # Verify checksum
+            print_info "Verifying checksum..."
+            local expected actual
+            expected=$(curl -sL "$CHECKSUM_URL" | grep -E "lumenyx-node" | awk '{print $1}' | head -1)
+            actual=$(sha256sum "$LUMENYX_DIR/$BINARY_NAME" | awk '{print $1}')
+
+            if [[ -n "$expected" ]] && [[ "$expected" == "$actual" ]]; then
+                print_ok "Checksum verified"
+            else
+                print_warning "Checksum verification skipped/failed"
+            fi
+
+            chmod +x "$LUMENYX_DIR/$BINARY_NAME"
+            print_ok "Binary updated to v$VERSION!"
+            sleep 2
+        else
+            print_error "Download failed - continuing with current binary"
+            sleep 2
+        fi
+    else
+        print_info "Skipping binary update..."
+        sleep 1
     fi
 }
 
@@ -2113,6 +2183,9 @@ main() {
     elif has_existing_data; then
         prompt_clean_install || true
     fi
+
+    # Always check if binary needs update (even if skipping clean install)
+    check_binary_update
 
     if is_first_run; then
         first_run
