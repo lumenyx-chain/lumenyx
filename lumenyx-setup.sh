@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v1.9.30 - Multi-threading Support
+# LUMENYX SETUP SCRIPT v2.1.2 - 24/7 Daemon Mode + UI Improvements
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
-VERSION="2.1.1"
-SCRIPT_VERSION="2.1.1"
+VERSION="2.1.3"
+SCRIPT_VERSION="2.1.3"
 
 # Colors
 RED='\033[0;31m'
@@ -31,6 +31,14 @@ RPC_RETRIES=3
 
 # Mining threads (empty = auto/all cores)
 THREADS_FILE="$LUMENYX_DIR/mining_threads.conf"
+
+# Daemon mode (systemd 24/7)
+DAEMON_CONF="$LUMENYX_DIR/daemon.conf"
+SYSTEMD_SERVICE="/etc/systemd/system/lumenyx.service"
+SYSTEMD_WATCHDOG="/etc/systemd/system/lumenyx-watchdog.service"
+SYSTEMD_WATCHDOG_TIMER="/etc/systemd/system/lumenyx-watchdog.timer"
+WATCHDOG_SCRIPT="/usr/local/bin/lumenyx-watchdog.sh"
+AUTOSTART_FILE="$HOME/.config/autostart/lumenyx.desktop"
 
 # Helpers
 HELPERS_DIR="$LUMENYX_DIR/helpers"
@@ -569,6 +577,12 @@ ensure_python_deps() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 node_running() {
+    # Check systemd first if daemon mode is enabled
+    if systemctl is-active lumenyx.service >/dev/null 2>&1; then
+        return 0
+    fi
+    
+    # Check PID file
     if [[ -f "$PID_FILE" ]]; then
         local pid
         pid=$(cat "$PID_FILE" 2>/dev/null)
@@ -1127,6 +1141,497 @@ pool_disable() {
     echo -e "${YELLOW}⚠️  You must restart mining for changes to take effect${NC}"
 }
 
+# Toggle functions for quick mode switching
+toggle_solo_mode() {
+    if ! pool_is_enabled; then
+        # Already in SOLO mode
+        echo ""
+        echo -e "${GREEN}✓ Already in SOLO mode${NC}"
+        sleep 1
+        return
+    fi
+    
+    # Switch to SOLO
+    rm -f "$POOL_CONF"
+    echo ""
+    echo -e "${GREEN}✓ Switched to SOLO mode${NC}"
+    
+    # Restart node if running
+    if node_running; then
+        echo -e "${YELLOW}Restarting node with SOLO mode...${NC}"
+        stop_node
+        sleep 2
+        start_node
+    fi
+    sleep 1
+}
+
+toggle_pool_mode() {
+    if pool_is_enabled; then
+        # Already in POOL mode
+        echo ""
+        echo -e "${GREEN}✓ Already in POOL mode${NC}"
+        sleep 1
+        return
+    fi
+    
+    # Switch to POOL
+    mkdir -p "$LUMENYX_DIR"
+    cat > "$POOL_CONF" <<EOF
+# LUMENYX Pool Configuration
+POOL_MODE=1
+EOF
+    echo ""
+    echo -e "${GREEN}✓ Switched to POOL mode${NC}"
+    
+    # Restart node if running
+    if node_running; then
+        echo -e "${YELLOW}Restarting node with POOL mode...${NC}"
+        stop_node
+        sleep 2
+        start_node
+    fi
+    sleep 1
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DAEMON MODE (24/7 SYSTEMD) FUNCTIONS  [PATCHED]
+# ═══════════════════════════════════════════════════════════════════════════════
+
+daemon_is_enabled() {
+    systemctl is-enabled lumenyx.service >/dev/null 2>&1
+}
+
+daemon_is_running() {
+    systemctl is-active lumenyx.service >/dev/null 2>&1
+}
+
+# --- Robust user/home detection (works for root@VPS and fabri@desktop) ---
+get_current_user() {
+    id -un
+}
+
+get_user_home() {
+    local user
+    user="$(get_current_user)"
+    # Do NOT trust $HOME blindly (can be inherited / wrong under sudo)
+    getent passwd "$user" | cut -d: -f6
+}
+
+daemon_compute_paths() {
+    DAEMON_USER="$(get_current_user)"
+    DAEMON_HOME="$(get_user_home)"
+
+    if [[ -z "$DAEMON_HOME" || ! -d "$DAEMON_HOME" ]]; then
+        echo -e "${RED}ERROR:${NC} Cannot determine home for user '$DAEMON_USER'"
+        return 1
+    fi
+
+    DAEMON_BIN="$DAEMON_HOME/.lumenyx/lumenyx-node"
+    DAEMON_WALLET_TXT="$DAEMON_HOME/.lumenyx/wallet.txt"
+
+    # Base path MUST be explicit to pin keystore location
+    DAEMON_BASE_PATH="$DAEMON_HOME/.local/share/lumenyx-node"
+    DAEMON_KEYSTORE_DIR="$DAEMON_BASE_PATH/chains/lumenyx_mainnet/keystore"
+
+    # Watchdog reads this file
+    DAEMON_LOGFILE="$DAEMON_HOME/.lumenyx/lumenyx.log"
+}
+
+daemon_print_paths() {
+    echo -e "${CYAN}Daemon user:${NC}    $DAEMON_USER"
+    echo -e "${CYAN}Daemon home:${NC}    $DAEMON_HOME"
+    echo -e "${CYAN}Binary:${NC}         $DAEMON_BIN"
+    echo -e "${CYAN}Base path:${NC}      $DAEMON_BASE_PATH"
+    echo -e "${CYAN}Keystore dir:${NC}   $DAEMON_KEYSTORE_DIR"
+    echo -e "${CYAN}wallet.txt:${NC}     $DAEMON_WALLET_TXT"
+    echo -e "${CYAN}Logfile:${NC}        $DAEMON_LOGFILE"
+}
+
+daemon_guard_rails_or_die() {
+    # Fail fast: NEVER allow systemd to start if wallet/keystore missing
+    [[ -x "$DAEMON_BIN" ]] || { echo -e "${RED}ERROR:${NC} Missing binary: $DAEMON_BIN"; return 1; }
+    [[ -s "$DAEMON_WALLET_TXT" ]] || { echo -e "${RED}ERROR:${NC} Missing wallet.txt: $DAEMON_WALLET_TXT"; return 1; }
+    [[ -d "$DAEMON_KEYSTORE_DIR" ]] || { echo -e "${RED}ERROR:${NC} Missing keystore dir: $DAEMON_KEYSTORE_DIR"; return 1; }
+
+    # Require keystore not empty (directory exists is not enough)
+    if ! ls -1 "$DAEMON_KEYSTORE_DIR"/* >/dev/null 2>&1; then
+        echo -e "${RED}ERROR:${NC} Keystore directory is empty: $DAEMON_KEYSTORE_DIR"
+        echo -e "${YELLOW}Hint:${NC} Start in normal mode once or import/insert keys, then retry daemon mode."
+        return 1
+    fi
+
+    # Ensure logfile directory exists (watchdog expects it)
+    mkdir -p "$DAEMON_HOME/.lumenyx" >/dev/null 2>&1 || true
+}
+
+create_systemd_service() {
+    daemon_compute_paths || return 1
+
+    local pool_flag=""
+    if pool_is_enabled; then
+        pool_flag=" --pool-mode"
+    fi
+
+    local threads_env=""
+    local threads
+    threads="$(get_threads)"
+    if [[ -n "$threads" ]]; then
+        threads_env="Environment=LUMENYX_MINING_THREADS=$threads"
+    fi
+
+    # IMPORTANT:
+    # - systemd does not expand "~"
+    # - pin --base-path so keystore is stable
+    # - use ExecStartPre guards
+    cat > /tmp/lumenyx.service <<EOF
+[Unit]
+Description=LUMENYX Node (24/7 Mining)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$DAEMON_USER
+Group=$DAEMON_USER
+WorkingDirectory=$DAEMON_HOME
+
+ExecStartPre=/usr/bin/test -s $DAEMON_WALLET_TXT
+ExecStartPre=/usr/bin/test -d $DAEMON_KEYSTORE_DIR
+ExecStartPre=/bin/sh -c 'ls -1 $DAEMON_KEYSTORE_DIR/* >/dev/null 2>&1'
+
+ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH --validator${pool_flag}
+
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+# Prefer journald (robust across distros)
+StandardOutput=journal
+StandardError=journal
+
+$threads_env
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo mv /tmp/lumenyx.service "$SYSTEMD_SERVICE"
+    sudo chmod 644 "$SYSTEMD_SERVICE"
+}
+
+create_watchdog_script() {
+    daemon_compute_paths || return 1
+    
+    cat > /tmp/lumenyx-watchdog.sh <<'WATCHDOG_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE_NAME="lumenyx.service"
+LOGFILE="__DAEMON_LOGFILE__"
+
+# Thresholds (seconds)
+NO_MINING_SECS="${NO_MINING_SECS:-60}"
+HASHRATE_ZERO_SECS="${HASHRATE_ZERO_SECS:-60}"
+COOLDOWN_SECS="${COOLDOWN_SECS:-120}"
+
+STATE_DIR="/run/lumenyx-watchdog"
+LAST_RESTART_FILE="${STATE_DIR}/last_restart_epoch"
+ZERO_START_FILE="${STATE_DIR}/zero_start_epoch"
+
+mkdir -p "${STATE_DIR}"
+chmod 755 "${STATE_DIR}" 2>/dev/null || true
+
+now_epoch() { date +%s; }
+
+line_epoch() {
+    local line="$1"
+    local ts
+    ts="$(echo "$line" | awk '{print $1" "$2}')"
+    date -d "$ts" +%s 2>/dev/null || echo 0
+}
+
+last_line_matching() {
+    local re="$1"
+    grep -E "$re" "$LOGFILE" 2>/dev/null | tail -n1 || true
+}
+
+last_mining_epoch() {
+    local line
+    line="$(last_line_matching 'Mining #[0-9]+ with difficulty')"
+    [ -n "$line" ] || { echo 0; return; }
+    line_epoch "$line"
+}
+
+last_hashrate_info() {
+    local line epoch hr
+    line="$(last_line_matching 'Hashrate total=')"
+    [ -n "$line" ] || { echo "0 -1"; return; }
+    epoch="$(line_epoch "$line")"
+    hr="$(echo "$line" | sed -n 's/.*Hashrate total=\([0-9]\+\) H\/s.*/\1/p')"
+    [ -n "$hr" ] || hr="-1"
+    echo "$epoch $hr"
+}
+
+cooldown_ok() {
+    local now last
+    now="$(now_epoch)"
+    last="$(cat "$LAST_RESTART_FILE" 2>/dev/null || echo 0)"
+    [ $((now - last)) -ge "$COOLDOWN_SECS" ]
+}
+
+mark_restarted() {
+    now_epoch >"$LAST_RESTART_FILE"
+    rm -f "$ZERO_START_FILE" 2>/dev/null || true
+}
+
+restart_node() {
+    logger -t lumenyx-watchdog "Restarting ${SERVICE_NAME} due to watchdog condition"
+    systemctl restart "$SERVICE_NAME"
+    mark_restarted
+}
+
+main() {
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+        exit 0
+    fi
+
+    local now lm
+    now="$(now_epoch)"
+    lm="$(last_mining_epoch)"
+
+    # Condition 1: no "Mining #..." for too long
+    if [ "$lm" -gt 0 ]; then
+        if [ $((now - lm)) -ge "$NO_MINING_SECS" ]; then
+            cooldown_ok && restart_node
+            exit 0
+        fi
+    fi
+
+    # Condition 2: hashrate = 0 for too long
+    local le_hr hr
+    read -r le_hr hr < <(last_hashrate_info)
+
+    if [ "$le_hr" -gt 0 ] && [ "$hr" = "0" ]; then
+        local zero_start
+        zero_start="$(cat "$ZERO_START_FILE" 2>/dev/null || echo 0)"
+        if [ "$zero_start" -eq 0 ]; then
+            echo "$now" >"$ZERO_START_FILE"
+        else
+            if [ $((now - zero_start)) -ge "$HASHRATE_ZERO_SECS" ]; then
+                cooldown_ok && restart_node
+                exit 0
+            fi
+        fi
+    else
+        rm -f "$ZERO_START_FILE" 2>/dev/null || true
+    fi
+}
+
+main "$@"
+WATCHDOG_EOF
+
+    # Replace placeholder with actual logfile path
+    sed -i "s|__DAEMON_LOGFILE__|$DAEMON_LOGFILE|g" /tmp/lumenyx-watchdog.sh
+    
+    sudo mv /tmp/lumenyx-watchdog.sh "$WATCHDOG_SCRIPT"
+    sudo chmod +x "$WATCHDOG_SCRIPT"
+}
+
+create_watchdog_service() {
+    cat > /tmp/lumenyx-watchdog.service <<EOF
+[Unit]
+Description=LUMENYX Watchdog
+After=lumenyx.service
+Wants=lumenyx.service
+
+[Service]
+Type=oneshot
+ExecStart=$WATCHDOG_SCRIPT
+EOF
+
+    sudo mv /tmp/lumenyx-watchdog.service "$SYSTEMD_WATCHDOG"
+    sudo chmod 644 "$SYSTEMD_WATCHDOG"
+}
+
+create_watchdog_timer() {
+    cat > /tmp/lumenyx-watchdog.timer <<EOF
+[Unit]
+Description=Run LUMENYX watchdog periodically
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=15s
+AccuracySec=1s
+Unit=lumenyx-watchdog.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    sudo mv /tmp/lumenyx-watchdog.timer "$SYSTEMD_WATCHDOG_TIMER"
+    sudo chmod 644 "$SYSTEMD_WATCHDOG_TIMER"
+}
+
+is_real_desktop_session() {
+    # Must have a GUI session
+    [[ -n "${XDG_CURRENT_DESKTOP:-}" || -n "${DESKTOP_SESSION:-}" ]] || return 1
+    # Must have a display
+    [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]] || return 1
+    # Must have gnome-terminal available
+    command -v gnome-terminal >/dev/null 2>&1 || return 1
+    return 0
+}
+
+create_autostart_desktop() {
+    if ! is_real_desktop_session; then
+        print_info "Desktop autostart skipped (no GUI desktop session detected)."
+        return 0
+    fi
+
+    local script_path="$(realpath "$0")"
+    
+    mkdir -p "$HOME/.config/autostart"
+    
+    cat > "$AUTOSTART_FILE" <<EOF
+[Desktop Entry]
+Type=Application
+Name=LUMENYX Wallet
+Comment=LUMENYX Mining Dashboard
+Exec=gnome-terminal -- bash -c '$script_path; exec bash'
+Terminal=false
+Hidden=false
+X-GNOME-Autostart-enabled=true
+EOF
+    
+    chmod +x "$AUTOSTART_FILE"
+}
+
+remove_autostart_desktop() {
+    rm -f "$AUTOSTART_FILE" 2>/dev/null || true
+}
+
+daemon_enable() {
+    echo ""
+    echo -e "${CYAN}Setting up 24/7 daemon mode...${NC}"
+    echo ""
+
+    # Need sudo for /etc/systemd/system + systemctl enable
+    if ! sudo -n true 2>/dev/null; then
+        echo -e "${YELLOW}This requires sudo access. Please enter your password:${NC}"
+    fi
+
+    # Compute paths + show them BEFORE doing anything
+    daemon_compute_paths || return 1
+    echo -e "${CYAN}Daemon mode will use:${NC}"
+    daemon_print_paths
+    echo ""
+
+    # Guard rails: NEVER start if wallet/keystore missing
+    if ! daemon_guard_rails_or_die; then
+        echo ""
+        echo -e "${YELLOW}Daemon mode NOT enabled.${NC} Create/import wallet/keystore first."
+        sleep 2
+        return 1
+    fi
+
+    # Stop the script-managed node if running (avoid double node)
+    if node_running && ! daemon_is_running; then
+        echo -e "${YELLOW}Stopping script-managed node...${NC}"
+        stop_node
+        sleep 2
+    fi
+
+    echo "Creating systemd service..."
+    create_systemd_service || return 1
+
+    echo "Creating watchdog script..."
+    create_watchdog_script
+
+    echo "Creating watchdog service..."
+    create_watchdog_service
+
+    echo "Creating watchdog timer..."
+    create_watchdog_timer
+
+    # Create autostart for desktop
+    echo "Creating desktop autostart..."
+    create_autostart_desktop
+
+    # Reload and enable
+    echo "Enabling services..."
+    sudo systemctl daemon-reload
+    sudo systemctl enable lumenyx.service
+    sudo systemctl enable lumenyx-watchdog.timer
+
+    # Start
+    echo "Starting services..."
+    sudo systemctl start lumenyx.service
+    sudo systemctl start lumenyx-watchdog.timer
+
+    # Mark as enabled
+    echo "1" > "$DAEMON_CONF"
+
+    echo ""
+    echo -e "${GREEN}✓ 24/7 Daemon mode ENABLED${NC}"
+    echo -e "${GREEN}✓ Node will start automatically on boot${NC}"
+    echo -e "${GREEN}✓ Watchdog will monitor and restart if needed${NC}"
+    echo -e "${GREEN}✓ Script will open automatically on login (desktop)${NC}"
+    sleep 2
+}
+
+daemon_disable() {
+    echo ""
+    echo -e "${CYAN}Disabling 24/7 daemon mode...${NC}"
+    echo ""
+    
+    # Stop and disable services
+    echo "Stopping services..."
+    sudo systemctl stop lumenyx-watchdog.timer 2>/dev/null || true
+    sudo systemctl stop lumenyx.service 2>/dev/null || true
+    
+    echo "Disabling services..."
+    sudo systemctl disable lumenyx-watchdog.timer 2>/dev/null || true
+    sudo systemctl disable lumenyx.service 2>/dev/null || true
+    
+    # Remove autostart
+    echo "Removing desktop autostart..."
+    remove_autostart_desktop
+    
+    # Remove daemon conf
+    rm -f "$DAEMON_CONF" 2>/dev/null || true
+    
+    echo ""
+    echo -e "${GREEN}✓ 24/7 Daemon mode DISABLED${NC}"
+    echo -e "${YELLOW}Node will only run when script is open${NC}"
+    sleep 2
+}
+
+toggle_daemon_mode() {
+    if daemon_is_enabled; then
+        # Already enabled, disable it
+        if ask_yes_no "Disable 24/7 mode? Node will stop when you close the script."; then
+            daemon_disable
+        fi
+    else
+        # Not enabled, enable it
+        echo ""
+        echo -e "${CYAN}═══ 24/7 DAEMON MODE ═══${NC}"
+        echo ""
+        echo "This will:"
+        echo "  • Run the node as a system service (systemd)"
+        echo "  • Start automatically when PC/VPS boots"
+        echo "  • Continue running even if you close this script"
+        echo "  • Auto-restart if mining gets stuck (watchdog)"
+        echo "  • Open this dashboard automatically on desktop login"
+        echo ""
+        if ask_yes_no "Enable 24/7 daemon mode?"; then
+            daemon_enable
+        fi
+    fi
+}
+
 menu_pool() {
     clear
     print_logo
@@ -1212,7 +1717,11 @@ print_dashboard() {
 
     local status="STOPPED"
     local status_color="${RED}○"
-    if node_running; then
+    if daemon_is_running; then
+        status="MINING"; if pool_is_enabled; then status="MINING (POOL)"; else status="MINING (SOLO)"; fi
+        status="${status} [systemd]"
+        status_color="${GREEN}●"
+    elif node_running; then
         status="MINING"; if pool_is_enabled; then status="MINING (POOL)"; else status="MINING (SOLO)"; fi
         status_color="${GREEN}●"
     fi
@@ -1221,8 +1730,27 @@ print_dashboard() {
     local threads_display
     threads_display=$(get_threads_display)
 
+    # Mining mode toggle display
+    local solo_indicator pool_indicator daemon_indicator
+    if pool_is_enabled; then
+        solo_indicator="${CYAN}○ SOLO${NC}"
+        pool_indicator="${GREEN}● POOL${NC}"
+    else
+        solo_indicator="${GREEN}● SOLO${NC}"
+        pool_indicator="${CYAN}○ POOL${NC}"
+    fi
+    
+    if daemon_is_enabled; then
+        daemon_indicator="${GREEN}● 24/7${NC}"
+    else
+        daemon_indicator="${CYAN}○ 24/7${NC}"
+    fi
+
     clear
     print_logo
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}   [S] $solo_indicator      [P] $pool_indicator      [D] $daemon_indicator               ${CYAN}║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "  Wallet:   ${GREEN}$short_addr${NC}"
     echo -e "  Balance:  ${GREEN}$balance LUMENYX${NC}"
@@ -1246,9 +1774,9 @@ dashboard_loop() {
         echo "  [6] 💰 Transaction History"
         echo "  [7] 🛠️  Useful Commands"
         echo "  [8] ⚙️  Set Mining Threads"
-        echo "  [9] 🏊 Mining Pool"
         echo "  [0] 🚪 Exit"
         echo ""
+        echo -e "  ${YELLOW}[S] SOLO  [P] POOL  [D] 24/7 Daemon${NC}"
         echo -e "  ${CYAN}Auto-refresh in 10s - Press a key to select${NC}"
         echo ""
 
@@ -1266,7 +1794,9 @@ dashboard_loop() {
             6) echo ""; echo "Loading..."; menu_tx_history ;;
             7) echo ""; echo "Loading..."; menu_commands ;;
             8) echo ""; echo "Loading..."; set_threads_menu; wait_enter ;;
-            9) echo ""; echo "Loading..."; menu_pool ;;
+            [Ss]) toggle_solo_mode ;;
+            [Pp]) toggle_pool_mode ;;
+            [Dd]) toggle_daemon_mode ;;
             0) echo ""; echo "Goodbye!"; exit 0 ;;
             refresh) ;;
             *) ;;
@@ -1279,13 +1809,31 @@ dashboard_loop() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 menu_start_stop() {
-    if node_running; then
-        if ask_yes_no "Mining is running. Stop it?"; then
-            stop_node
+    # If daemon mode is enabled, use systemctl
+    if daemon_is_enabled; then
+        if daemon_is_running; then
+            echo ""
+            echo -e "${CYAN}Node is managed by systemd (24/7 mode)${NC}"
+            if ask_yes_no "Stop mining? (will restart automatically on reboot)"; then
+                sudo systemctl stop lumenyx.service
+                echo -e "${GREEN}✓ Node stopped${NC}"
+            fi
+        else
+            if ask_yes_no "Start mining? (managed by systemd)"; then
+                sudo systemctl start lumenyx.service
+                echo -e "${GREEN}✓ Node started${NC}"
+            fi
         fi
     else
-        if ask_yes_no "Start mining?"; then
-            start_node
+        # Normal script-managed mode
+        if node_running; then
+            if ask_yes_no "Mining is running. Stop it?"; then
+                stop_node
+            fi
+        else
+            if ask_yes_no "Start mining?"; then
+                start_node
+            fi
         fi
     fi
     wait_enter
