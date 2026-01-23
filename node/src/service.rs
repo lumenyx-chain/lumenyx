@@ -431,10 +431,12 @@ impl MinerState {
                         .as_nanos() as u64;
                     local_nonce[0..8].copy_from_slice(&seed_time.to_le_bytes());
                     local_nonce[8..16].copy_from_slice(&(thread_id as u64).to_le_bytes());
-
                     loop {
-                        if futures::executor::block_on(job_rx.changed()).is_err() {
-                            return;
+                        // Non bloccare se c'è già un update pendente
+                        if !job_rx.has_changed().unwrap_or(false) {
+                            if futures::executor::block_on(job_rx.changed()).is_err() {
+                                return;
+                            }
                         }
                         let job = *job_rx.borrow_and_update();
                         log::info!("Worker {}: new job_id={} height={}", thread_id, job.job_id, job.height);
@@ -462,8 +464,8 @@ impl MinerState {
                             continue;
                         };
 
-                        loop {
-                            if job_rx.has_changed().unwrap_or(false) { let job_now = *job_rx.borrow_and_update(); if job_now.job_id != job.job_id { break; } }
+                        'mine_job: loop {
+                            if job_rx.has_changed().unwrap_or(false) { let job_now = *job_rx.borrow_and_update(); if job_now.job_id != job.job_id { break 'mine_job; } }
 
                             let pre_hash = job.pre_hash;
                             let target = job.target;
@@ -506,7 +508,7 @@ impl MinerState {
                                         job_id: job.job_id,
                                         nonce: local_nonce,
                                     });
-                                    break;
+                                    break 'mine_job;
                                 }
                             }
                         }
