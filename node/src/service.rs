@@ -114,6 +114,68 @@ struct PoolPayoutDigest {
 }
 
 const POOL_PAYOUT_DIGEST_TAG: &[u8; 4] = b"PPLN";
+
+fn prepare_pool_payout_digest_item(
+    pool_mode: bool,
+    parent_number: u32,
+    sharechain: &std::sync::Arc<std::sync::Mutex<Sharechain>>,
+) -> Option<sp_runtime::generic::DigestItem> {
+    // -------------------- P2Pool PPLNS payout digest (CALCOLATO PRIMA DEL MINING) --------------------
+    let mut pool_payout_digest_item: Option<sp_runtime::generic::DigestItem> = None;
+
+    if pool_mode {
+        let block_u32: u32 = parent_number + 1;
+        let block_reward: u128 = lumenyx_primitives::calculate_block_reward(block_u32);
+
+        if block_reward > 0 {
+            let (tip, window_shares) = {
+                let sc = sharechain.lock().expect("sharechain mutex poisoned");
+                let tip = sc.best_tip().unwrap_or(sp_core::H256::zero());
+                let shares = if tip == sp_core::H256::zero() {
+                    Vec::new()
+                } else {
+                    sc.walk_back(tip, crate::pool::PPLNS_WINDOW_SHARES)
+                };
+                (tip, shares)
+            };
+
+            if !window_shares.is_empty() {
+                let payouts_entries = crate::pool::pplns::compute_pplns_payouts(
+                    &window_shares,
+                    block_reward,
+                    crate::pool::MAX_POOL_PAYOUTS,
+                );
+
+                let mut payouts: Vec<([u8; 32], u128)> = payouts_entries
+                    .into_iter()
+                    .map(|e| (e.account, e.amount))
+                    .collect();
+                payouts.sort_by(|a, b| a.0.cmp(&b.0));
+
+                let payout_digest = PoolPayoutDigest {
+                    sharechain_tip: tip,
+                    block_reward,
+                    payouts,
+                };
+
+                let mut payload = Vec::new();
+                payload.extend_from_slice(POOL_PAYOUT_DIGEST_TAG);
+                payload.extend(payout_digest.encode());
+
+                pool_payout_digest_item = Some(sp_runtime::generic::DigestItem::Other(payload));
+
+                log::info!(
+                    "🏊 PPLNS digest prepared tip={:?} reward={} payouts={}",
+                    tip,
+                    block_reward,
+                    payout_digest.payouts.len()
+                );
+            }
+        }
+    }
+
+    pool_payout_digest_item
+}
 /// Generate storage key for Difficulty::CurrentDifficulty
 fn difficulty_storage_key() -> StorageKey {
     // twox_128("Difficulty") ++ twox_128("CurrentDifficulty")
@@ -374,7 +436,8 @@ impl MinerState {
                         if futures::executor::block_on(job_rx.changed()).is_err() {
                             return;
                         }
-                        let job = *job_rx.borrow();
+                        let job = *job_rx.borrow_and_update();
+                        log::info!("Worker {}: new job_id={} height={}", thread_id, job.job_id, job.height);
 
                         if job.seed_height != last_seed_height {
                             let seed_bytes: [u8; 32] = job.seed.into();
@@ -400,10 +463,7 @@ impl MinerState {
                         };
 
                         loop {
-                            let job_now = *job_rx.borrow();
-                            if job_now.job_id != job.job_id {
-                                break;
-                            }
+                            if job_rx.has_changed().unwrap_or(false) { let job_now = *job_rx.borrow_and_update(); if job_now.job_id != job.job_id { break; } }
 
                             let pre_hash = job.pre_hash;
                             let target = job.target;
@@ -1044,6 +1104,8 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                 let mut import_stream = mining_client.import_notification_stream();
                 let mut active_best_hash: Option<H256> = None;
                 let mut templates: TemplateLru2 = TemplateLru2::new();
+                let mut share_drain_tick = tokio::time::interval(Duration::from_millis(100));
+                share_drain_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
                 // Bootstrap: template sul best attuale
                 {
@@ -1107,7 +1169,16 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                     let (block, storage_changes) = (proposal.block, proposal.storage_changes);
                     let (header, body) = block.deconstruct();
 
+
+                    let pool_payout_digest_item =
+                        prepare_pool_payout_digest_item(pool_mode, parent_number, &sharechain);
+
                     let mut header_no_seal = header.clone();
+
+
+                    if let Some(di) = pool_payout_digest_item.clone() {
+                        header_no_seal.digest_mut().logs.push(di);
+                    }
                     header_no_seal.digest_mut().logs.retain(|d| {
                         !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID)
                     });
@@ -1140,7 +1211,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                     };
 
                     templates.insert(tpl);
-                    let _ = miner_state.job_tx.send(job);
+                    match miner_state.job_tx.send(job) { Ok(()) => log::info!("📤 Sent job_id={} (bootstrap)", job.job_id), Err(e) => log::error!("❌ job_tx.send failed (bootstrap): {:?}", e), }
 
                     log::info!(
                         "⛏️ Mining started: #{} parent={:?} job_id={} pre_hash={:?} difficulty={}",
@@ -1220,7 +1291,16 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                             let (block, storage_changes) = (proposal.block, proposal.storage_changes);
                             let (header, body) = block.deconstruct();
 
+
+                    let pool_payout_digest_item =
+                        prepare_pool_payout_digest_item(pool_mode, parent_number, &sharechain);
+
                             let mut header_no_seal = header.clone();
+
+
+                    if let Some(di) = pool_payout_digest_item.clone() {
+                        header_no_seal.digest_mut().logs.push(di);
+                    }
                             header_no_seal.digest_mut().logs.retain(|d| {
                                 !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID)
                             });
@@ -1253,12 +1333,87 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                             };
 
                             templates.insert(tpl);
-                            let _ = miner_state.job_tx.send(job);
+                            match miner_state.job_tx.send(job) { Ok(()) => log::info!("📤 Sent job_id={} (new best)", job.job_id), Err(e) => log::error!("❌ job_tx.send failed (new best): {:?}", e), }
 
                             log::info!(
                                 "⛏️ New best imported (origin={:?}): mining #{} parent={:?} job_id={} pre_hash={:?} difficulty={}",
                                 n.origin, job.height, job.parent_hash, job.job_id, job.pre_hash, difficulty
                             );
+                        }
+
+                        _ = share_drain_tick.tick(), if pool_mode => {
+                            // 1) Receive shares from peers
+                            if let Some(ref mut gossip) = pool_gossip.as_mut() {
+                                loop {
+                                    match gossip.rx_in.try_recv() {
+                                        Ok(remote_share) => {
+                                            sharechain.lock().unwrap().insert(remote_share);
+                                        }
+                                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                                        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                                    }
+                                }
+                            }
+
+                            // 2) Drain local shares from workers (accept even if job_id changed)
+                            loop {
+                                match miner_state.found_share_rx.try_recv() {
+                                    Ok(share_found) => {
+                                        let best_hash_now = mining_client.info().best_hash;
+                                        let fresh = is_recent_parent(
+                                            &*mining_client,
+                                            share_found.parent_hash,
+                                            best_hash_now,
+                                            SHARE_STALE_DEPTH,
+                                        );
+
+                                        log::info!(
+                                            "🏊 Share from worker: job={} height={} parent={:?} fresh={} (current_job={})",
+                                            share_found.job_id,
+                                            share_found.height,
+                                            share_found.parent_hash,
+                                            fresh,
+                                            miner_state.job_id
+                                        );
+
+                                        if !fresh {
+                                            continue;
+                                        }
+
+                                        let difficulty_now: u128 =
+                                            read_difficulty_from_storage(&*mining_client, best_hash_now);
+                                        let share_difficulty: u128 =
+                                            (difficulty_now / SHARE_DIFFICULTY_DIVISOR).max(1);
+
+                                        let pool_share = PoolShare {
+                                            id: H256::zero(),
+                                            prev: sharechain.lock().unwrap().best_tip().unwrap_or(H256::zero()),
+                                            main_parent: share_found.parent_hash,
+                                            miner: miner_address,
+                                            share_difficulty,
+                                            nonce: share_found.nonce,
+                                            timestamp_ms: std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                                .as_millis() as u64,
+                                        };
+                                        let share_with_id = PoolShare {
+                                            id: pool_share.compute_id(),
+                                            ..pool_share
+                                        };
+
+                                        let accepted = sharechain.lock().unwrap().insert(share_with_id.clone());
+                                        if accepted {
+                                            if let Some(ref gossip) = pool_gossip {
+                                                let _ = gossip.tx_out.send(share_with_id.clone());
+                                                log::info!("🏊 Share accepted+broadcast id={:?}", share_with_id.id);
+                                            }
+                                        }
+                                    }
+                                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                                }
+                            }
                         }
 
                         maybe_found = miner_state.found_rx.recv() => {
@@ -1351,7 +1506,16 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                                             let (block, storage_changes) = (proposal.block, proposal.storage_changes);
                                             let (header, body) = block.deconstruct();
 
+
+                    let pool_payout_digest_item =
+                        prepare_pool_payout_digest_item(pool_mode, parent_number, &sharechain);
+
                                             let mut header_no_seal = header.clone();
+
+
+                    if let Some(di) = pool_payout_digest_item.clone() {
+                        header_no_seal.digest_mut().logs.push(di);
+                    }
                                             header_no_seal.digest_mut().logs.retain(|d| {
                                                 !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID)
                                             });
@@ -1384,7 +1548,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                                             };
 
                                             templates.insert(tpl);
-                                            let _ = miner_state.job_tx.send(job);
+                                            match miner_state.job_tx.send(job) { Ok(()) => log::info!("📤 Sent job_id={} (re-arm)", job.job_id), Err(e) => log::error!("❌ job_tx.send failed (re-arm): {:?}", e), }
 
                                             log::info!(
                                                 "⛏️ Re-armed mining: #{} parent={:?} job_id={} pre_hash={:?} difficulty={}",
