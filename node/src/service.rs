@@ -465,7 +465,7 @@ impl MinerState {
                         };
 
                         'mine_job: loop {
-                            if job_rx.has_changed().unwrap_or(false) { let job_now = *job_rx.borrow_and_update(); if job_now.job_id != job.job_id { break 'mine_job; } }
+                            let cur = *job_rx.borrow(); if cur.job_id != job.job_id { let _ = job_rx.borrow_and_update(); break 'mine_job; }
 
                             let pre_hash = job.pre_hash;
                             let target = job.target;
