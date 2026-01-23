@@ -247,6 +247,9 @@ where
         // 2) Normalize digests: seal fuori dall'header, dentro post_digests.
         remove_seal_from_header(&mut params.header);
         ensure_single_seal_in_post_digests(&mut params, nonce);
+        // PRE_HASH per debug
+        let pre_hash = params.header.hash();
+        log::info!("pow_import: pre_hash={:?}", pre_hash);
 
         // 3) Verify RX-LX PoW
         if !self.verify_pow(&*self.inner, &params.header, &nonce) {

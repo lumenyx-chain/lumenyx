@@ -277,7 +277,7 @@ struct MiningJob {
     job_id: u64,
     height: u64,
     parent_hash: H256,
-    header_hash: H256,
+    pre_hash: H256,
     target: H256,
     share_target: H256,
     seed_height: u64,
@@ -319,7 +319,7 @@ impl MinerState {
             job_id: 0,
             height: 0,
             parent_hash: H256::zero(),
-            header_hash: H256::zero(),
+            pre_hash: H256::zero(),
             target: H256::repeat_byte(0xff),
             share_target: H256::repeat_byte(0xff),
             seed_height: 0,
@@ -405,7 +405,7 @@ impl MinerState {
                                 break;
                             }
 
-                            let header_hash = job.header_hash;
+                            let pre_hash = job.pre_hash;
                             let target = job.target;
                             let share_target = job.share_target;
 
@@ -422,7 +422,7 @@ impl MinerState {
 
                                 // input = header_hash || nonce
                                 let mut input = [0u8; 64];
-                                input[..32].copy_from_slice(header_hash.as_ref());
+                                input[..32].copy_from_slice(pre_hash.as_ref());
                                 input[32..].copy_from_slice(&local_nonce);
 
                                 let pow_hash = sp_core::H256::from_slice(&vm.hash(&input));
@@ -485,6 +485,87 @@ impl MinerState {
             .map(|c| c.load(Ordering::Relaxed))
             .collect::<Vec<_>>();
         (total, per)
+    }
+}
+
+// ============================================================
+// POW TEMPLATE STRUCTURES (Option A - Reactive Mining)
+// ============================================================
+
+// Template congelato associato a job_id
+pub(crate) struct PowTemplate {
+    pub job_id: u64,
+    pub height: u64,
+    pub parent_hash: H256,
+
+    pub header_no_seal: <Block as BlockT>::Header,
+    pub body: Vec<<Block as BlockT>::Extrinsic>,
+    pub storage_changes: sp_state_machine::StorageChanges<<<Block as BlockT>::Header as HeaderT>::Hashing>,
+
+    pub pre_hash: H256,
+    pub target: H256,
+    pub share_target: H256,
+    pub seed_height: u64,
+    pub seed: H256,
+}
+
+// LRU max 2 templates (active + previous)
+pub(crate) struct TemplateLru2 {
+    order: std::collections::VecDeque<u64>,
+    map: std::collections::HashMap<u64, PowTemplate>,
+}
+
+impl TemplateLru2 {
+    pub fn new() -> Self {
+        Self { order: std::collections::VecDeque::new(), map: std::collections::HashMap::new() }
+    }
+
+    pub fn clear(&mut self) {
+        self.order.clear();
+        self.map.clear();
+    }
+
+    pub fn insert(&mut self, tpl: PowTemplate) {
+        let id = tpl.job_id;
+
+        if self.map.contains_key(&id) {
+            self.map.insert(id, tpl);
+            self.order.retain(|x| *x != id);
+            self.order.push_back(id);
+        } else {
+            self.map.insert(id, tpl);
+            self.order.push_back(id);
+        }
+
+        while self.order.len() > 2 {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            }
+        }
+    }
+
+    pub fn remove(&mut self, job_id: u64) -> Option<PowTemplate> {
+        self.order.retain(|x| *x != job_id);
+        self.map.remove(&job_id)
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+}
+
+pub(crate) fn next_job_id(job_id: &mut u64) -> u64 {
+    *job_id = job_id.wrapping_add(1).max(1);
+    *job_id
+}
+
+pub(crate) fn miner_digest_for_template(miner_address: [u8; 32]) -> sp_runtime::generic::Digest {
+    let miner_digest_data = MinerAddressDigest { miner: miner_address };
+    sp_runtime::generic::Digest {
+        logs: vec![sp_runtime::generic::DigestItem::PreRuntime(
+            LUMENYX_ENGINE_ID,
+            miner_digest_data.encode(),
+        )],
     }
 }
 
@@ -930,7 +1011,6 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
             "pow-miner",
             Some("mining"),
             async move {
-                let mut interval = tokio::time::interval(Duration::from_millis(100));
                 let mut consecutive_propose_failures: u32 = 0;
                 const MAX_FAILURES_BEFORE_POOL_CLEAR: u32 = 3;
                 let mut last_difficulty: u128 = FALLBACK_DIFFICULTY;
@@ -961,330 +1041,360 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                 let mut last_total: u64 = 0;
                 let mut last_per_thread: Vec<u64> = vec![0; num_threads];
 
-                loop {
-                    if mining_sync_service.is_major_syncing() {
-                        log::debug!("⏸️  Syncing in progress...");
-                        tokio::time::sleep(Duration::from_millis(2000)).await;
-                        continue;
-                    }
+                let mut import_stream = mining_client.import_notification_stream();
+                let mut active_best_hash: Option<H256> = None;
+                let mut templates: TemplateLru2 = TemplateLru2::new();
 
-                    interval.tick().await;
-
-                    // Print hashrate every ~5 seconds (not tied to block events)
-                    if last_report.elapsed() >= Duration::from_secs(5) {
-                        let dt = last_report.elapsed().as_secs_f64().max(0.001);
-
-                        let (total_now, per_now) = miner_state.snapshot_hash_counts();
-                        let total_hps = (total_now.saturating_sub(last_total) as f64) / dt;
-
-                        let mut per_hps = Vec::with_capacity(num_threads);
-                        for i in 0..num_threads {
-                            let hps = (per_now[i].saturating_sub(last_per_thread[i]) as f64) / dt;
-                            per_hps.push(hps);
-                        }
-
-                        // Keep the log readable: print total + per-thread in one line
-                        let per_str = per_hps
-                            .iter()
-                            .enumerate()
-                            .map(|(i, v)| format!("t{}={:.0} H/s", i, v))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-
-                        log::info!("⚙️ Hashrate total={:.0} H/s | {}", total_hps, per_str);
-
-                        last_report = tokio::time::Instant::now();
-                        last_total = total_now;
-                        last_per_thread = per_now;
-                    }
-
+                // Bootstrap: template sul best attuale
+                {
                     let best_header = match select_chain_mining.best_chain().await {
                         Ok(h) => h,
                         Err(e) => {
-                            log::warn!("Failed to get best chain: {:?}", e);
-                            continue;
+                            log::error!("❌ select_chain_mining.best_chain failed: {:?}", e);
+                            return;
                         }
                     };
 
-                    let parent_hash = best_header.hash();
-                    let parent_number = *best_header.number();
+                    let best_hash: H256 = best_header.hash();
+                    active_best_hash = Some(best_hash);
 
-                    // Read difficulty from best chain state (avoid discarded state)
-                    let best_hash = mining_client.info().best_hash;
-                    let difficulty = read_difficulty_from_storage(&*mining_client, best_hash);
-                    let target = difficulty_to_target(difficulty);
+                    let new_job_id = next_job_id(&mut miner_state.job_id);
+
+                    let parent_hash: H256 = best_header.hash();
+                    let parent_number: u32 = (*best_header.number()).into();
+                    let height: u64 = (parent_number as u64) + 1;
+
+                    let difficulty: u128 = read_difficulty_from_storage(&*mining_client, parent_hash);
+                    let target: H256 = difficulty_to_target(difficulty);
                     let share_difficulty = (difficulty / SHARE_DIFFICULTY_DIVISOR).max(1);
-                    let share_target = difficulty_to_target(share_difficulty);
+                    let share_target: H256 = difficulty_to_target(share_difficulty);
 
-                    if difficulty != last_difficulty {
-                        log::info!("⚡ Difficulty changed: {} -> {}", last_difficulty, difficulty);
-                        last_difficulty = difficulty;
+                    let seed_height_val: u64 = seed_sched::seed_height(height);
+                    if let Err(e) = rx_lx_pow.maybe_reseed(height, &get_block_hash) {
+                        log::error!("❌ RX-LX reseed failed: {}", e);
+                        return;
                     }
+                    let seed: H256 = rx_lx_pow.seed;
 
-                    blocks_since_difficulty_log += 1;
-                    if blocks_since_difficulty_log >= 100 {
-                        log::info!("📊 Current difficulty: {}", difficulty);
-                        blocks_since_difficulty_log = 0;
-                    }
-
+                    use sp_inherents::InherentDataProvider;
                     let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
                     let inherent_data = match timestamp.create_inherent_data().await {
                         Ok(d) => d,
                         Err(e) => {
-                            log::warn!("Failed to create inherent data: {:?}", e);
-                            continue;
+                            log::error!("❌ Failed to create inherent data: {:?}", e);
+                            return;
                         }
                     };
+
+                    let digest = miner_digest_for_template(miner_address);
 
                     let proposer = match proposer_factory.init(&best_header).await {
                         Ok(p) => p,
                         Err(e) => {
-                            log::warn!("Failed to create proposer: {:?}", e);
-                            continue;
+                            log::error!("❌ proposer_factory.init failed: {:?}", e);
+                            return;
                         }
                     };
 
-                    let miner_digest = MinerAddressDigest { miner: miner_address };
-                    let digest = sp_runtime::generic::Digest {
-                        logs: vec![DigestItem::PreRuntime(LUMENYX_ENGINE_ID, miner_digest.encode())],
-                    };
-
-                    let proposal = match proposer.propose(
-                        inherent_data,
-                        digest,
-                        Duration::from_millis(3000),
-                        None,
-                    ).await {
+                    let proposal = match proposer.propose(inherent_data, digest, Duration::from_millis(800), None).await {
                         Ok(p) => p,
                         Err(e) => {
-                            consecutive_propose_failures += 1;
-                            log::warn!(
-                                "⚠️ Failed to propose block ({}/{}): {:?}",
-                                consecutive_propose_failures,
-                                MAX_FAILURES_BEFORE_POOL_CLEAR,
-                                e
-                            );
-                            if consecutive_propose_failures >= MAX_FAILURES_BEFORE_POOL_CLEAR {
-                                log::warn!("🧹 Clearing transaction pool");
-                                let pending: Vec<_> = mining_tx_pool.ready().map(|tx| tx.hash.clone()).collect();
-                                for hash in pending {
-                                    let _ = mining_tx_pool.remove_invalid(&[hash]);
-                                }
-                                consecutive_propose_failures = 0;
-                            }
-                            continue;
+                            log::error!("❌ proposer.propose failed: {:?}", e);
+                            return;
                         }
                     };
 
                     let (block, storage_changes) = (proposal.block, proposal.storage_changes);
                     let (header, body) = block.deconstruct();
-                    let header_hash = header.hash();
 
-                    if let Err(e) = rx_lx_pow.maybe_reseed(parent_number as u64 + 1, &get_block_hash) {
-                        log::error!("❌ RX-LX reseed failed: {}", e);
+                    let mut header_no_seal = header.clone();
+                    header_no_seal.digest_mut().logs.retain(|d| {
+                        !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID)
+                    });
+
+                    let pre_hash: H256 = header_no_seal.hash();
+
+                    let tpl = PowTemplate {
+                        job_id: new_job_id,
+                        height,
+                        parent_hash,
+                        header_no_seal,
+                        body,
+                        storage_changes,
+                        pre_hash,
+                        target,
+                        share_target,
+                        seed_height: seed_height_val,
+                        seed,
+                    };
+
+                    let job = MiningJob {
+                        job_id: tpl.job_id,
+                        height: tpl.height,
+                        parent_hash: tpl.parent_hash,
+                        pre_hash: tpl.pre_hash,
+                        target: tpl.target,
+                        share_target: tpl.share_target,
+                        seed_height: tpl.seed_height,
+                        seed: tpl.seed,
+                    };
+
+                    templates.insert(tpl);
+                    let _ = miner_state.job_tx.send(job);
+
+                    log::info!(
+                        "⛏️ Mining started: #{} parent={:?} job_id={} pre_hash={:?} difficulty={}",
+                        job.height, job.parent_hash, job.job_id, job.pre_hash, difficulty
+                    );
+                }
+
+                loop {
+                    if mining_sync_service.is_major_syncing() {
+                        tokio::time::sleep(Duration::from_millis(2000)).await;
                         continue;
                     }
 
-                    let (job_id, parent_changed) = miner_state.next_job_id_if_parent_changed(parent_hash);
+                    tokio::select! {
+                        maybe_n = import_stream.next() => {
+                            let Some(n) = maybe_n else { break; };
 
-                    if parent_changed {
-                        log::info!(
-                            "⛏️ Mining #{} with difficulty={} threads={}",
-                            parent_number + 1,
-                            difficulty,
-                            num_threads
-                        );
-                    }
+                            if !n.is_new_best {
+                                continue;
+                            }
 
-                    let seed_height = seed_sched::seed_height(parent_number as u64 + 1);
+                            let new_best_hash: H256 = n.hash;
 
-                    let job = MiningJob {
-                        job_id,
-                        height: (parent_number as u64) + 1,
-                        parent_hash,
-                        header_hash,
-                        target,
-                        share_target,
-                        seed_height,
-                        seed: rx_lx_pow.seed,
-                    };
-                    let _ = miner_state.job_tx.send(job);
+                            if active_best_hash == Some(new_best_hash) {
+                                continue;
+                            }
 
-                    let found = tokio::time::timeout(
-                        Duration::from_millis(TARGET_BLOCK_TIME_MS.saturating_sub(200)),
-                        miner_state.found_rx.recv(),
-                    ).await;
+                            active_best_hash = Some(new_best_hash);
+                            templates.clear();
 
-                    match found {
-                        Ok(Some(found)) if found.job_id == job_id => {
-                            let nonce = found.nonce;
-                            let pow_hash = rx_lx_pow.hash(&header_hash, &nonce);
+                            let new_job_id = next_job_id(&mut miner_state.job_id);
+
+                            let parent_hash: H256 = n.header.hash();
+                            let parent_number: u32 = (*n.header.number()).into();
+                            let height: u64 = (parent_number as u64) + 1;
+
+                            let difficulty: u128 = read_difficulty_from_storage(&*mining_client, parent_hash);
+                            let target: H256 = difficulty_to_target(difficulty);
+                            let share_difficulty = (difficulty / SHARE_DIFFICULTY_DIVISOR).max(1);
+                            let share_target: H256 = difficulty_to_target(share_difficulty);
+
+                            let seed_height_val: u64 = seed_sched::seed_height(height);
+                            if let Err(e) = rx_lx_pow.maybe_reseed(height, &get_block_hash) {
+                                log::error!("❌ RX-LX reseed failed: {}", e);
+                                continue;
+                            }
+                            let seed: H256 = rx_lx_pow.seed;
+
+                            use sp_inherents::InherentDataProvider;
+                            let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
+                            let inherent_data = match timestamp.create_inherent_data().await {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    log::warn!("Failed to create inherent data: {:?}", e);
+                                    continue;
+                                }
+                            };
+
+                            let digest = miner_digest_for_template(miner_address);
+
+                            let proposer = match proposer_factory.init(&n.header).await {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    log::warn!("Failed to create proposer: {:?}", e);
+                                    continue;
+                                }
+                            };
+
+                            let proposal = match proposer.propose(inherent_data, digest, Duration::from_millis(800), None).await {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    log::warn!("Failed to propose block: {:?}", e);
+                                    continue;
+                                }
+                            };
+
+                            let (block, storage_changes) = (proposal.block, proposal.storage_changes);
+                            let (header, body) = block.deconstruct();
+
+                            let mut header_no_seal = header.clone();
+                            header_no_seal.digest_mut().logs.retain(|d| {
+                                !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID)
+                            });
+
+                            let pre_hash: H256 = header_no_seal.hash();
+
+                            let tpl = PowTemplate {
+                                job_id: new_job_id,
+                                height,
+                                parent_hash,
+                                header_no_seal,
+                                body,
+                                storage_changes,
+                                pre_hash,
+                                target,
+                                share_target,
+                                seed_height: seed_height_val,
+                                seed,
+                            };
+
+                            let job = MiningJob {
+                                job_id: tpl.job_id,
+                                height: tpl.height,
+                                parent_hash: tpl.parent_hash,
+                                pre_hash: tpl.pre_hash,
+                                target: tpl.target,
+                                share_target: tpl.share_target,
+                                seed_height: tpl.seed_height,
+                                seed: tpl.seed,
+                            };
+
+                            templates.insert(tpl);
+                            let _ = miner_state.job_tx.send(job);
 
                             log::info!(
-                                "🎯 Nonce found for #{}; difficulty={}, hash={:?}",
-                                parent_number + 1,
-                                difficulty,
-                                pow_hash
+                                "⛏️ New best imported (origin={:?}): mining #{} parent={:?} job_id={} pre_hash={:?} difficulty={}",
+                                n.origin, job.height, job.parent_hash, job.job_id, job.pre_hash, difficulty
+                            );
+                        }
+
+                        maybe_found = miner_state.found_rx.recv() => {
+                            let Some(found) = maybe_found else { break; };
+
+                            let Some(tpl) = templates.remove(found.job_id) else {
+                                log::debug!("stale nonce dropped job_id={}", found.job_id);
+                                continue;
+                            };
+
+                            let pow_hash = rx_lx_pow.hash(&tpl.pre_hash, &found.nonce);
+                            if pow_hash > tpl.target {
+                                log::warn!(
+                                    "nonce invalid locally job_id={} height={} pow_hash={:?} target={:?}",
+                                    tpl.job_id, tpl.height, pow_hash, tpl.target
+                                );
+                                continue;
+                            }
+
+                            log::info!(
+                                "🎯 Nonce found job_id={} height={} parent={:?} pre_hash={:?} pow_hash={:?}",
+                                tpl.job_id, tpl.height, tpl.parent_hash, tpl.pre_hash, pow_hash
                             );
 
-                            // -------------------- P2Pool PPLNS payout digest --------------------
-                            let mut pool_payout_digest_item: Option<sp_runtime::generic::DigestItem> = None;
-
-                            if pool_mode {
-                                let block_u32: u32 = parent_number + 1;
-                                let block_reward: u128 = lumenyx_primitives::calculate_block_reward(block_u32);
-
-                                if block_reward > 0 {
-                                    let (tip, window_shares) = {
-                                        let sc = sharechain.lock().expect("sharechain mutex poisoned");
-                                        let tip = sc.best_tip().unwrap_or(sp_core::H256::zero());
-                                        let shares = if tip == sp_core::H256::zero() {
-                                            Vec::new()
-                                        } else {
-                                            sc.walk_back(tip, crate::pool::PPLNS_WINDOW_SHARES)
-                                        };
-                                        (tip, shares)
-                                    };
-
-                                    if !window_shares.is_empty() {
-                                        let payouts_entries = crate::pool::pplns::compute_pplns_payouts(
-                                            &window_shares,
-                                            block_reward,
-                                            crate::pool::MAX_POOL_PAYOUTS,
-                                        );
-
-                                        let mut payouts: Vec<([u8; 32], u128)> = payouts_entries
-                                            .into_iter()
-                                            .map(|e| (e.account, e.amount))
-                                            .collect();
-
-                                        payouts.sort_by(|a, b| a.0.cmp(&b.0));
-
-                                        let payout_digest = PoolPayoutDigest {
-                                            sharechain_tip: tip,
-                                            block_reward,
-                                            payouts,
-                                        };
-
-                                        let mut payload = Vec::new();
-                                        payload.extend_from_slice(POOL_PAYOUT_DIGEST_TAG);
-                                        payload.extend(payout_digest.encode());
-
-                                        pool_payout_digest_item = Some(sp_runtime::generic::DigestItem::Other(payload));
-
-                                        log::info!(
-                                            "🏊 PPLNS digest prepared: tip={:?} reward={} payouts={}",
-                                            tip,
-                                            block_reward,
-                                            payout_digest.payouts.len()
-                                        );
-                                    }
-                                }
-                            }
-                            // -------------------------------------------------------------------
-
-                            // PPLNS digest in header (runtime reads frame_system::digest().logs)
-                            let mut final_header = header.clone();
-                            if let Some(di) = pool_payout_digest_item {
-                                final_header.digest_mut().logs.push(di);
-                            }
-                            
-                            let mut import_params = BlockImportParams::new(BlockOrigin::Own, final_header);
-                            
-                            // Seal in post_digests (pow_import.rs expects it here)
-                            let seal = sp_runtime::DigestItem::Seal(LUMENYX_ENGINE_ID, nonce.to_vec());
+                            let mut import_params = BlockImportParams::new(BlockOrigin::Own, tpl.header_no_seal.clone());
+                            let seal = DigestItem::Seal(LUMENYX_ENGINE_ID, found.nonce.to_vec());
                             import_params.post_digests.push(seal);
-                            import_params.body = Some(body.clone());
+
+                            import_params.body = Some(tpl.body.clone());
                             import_params.state_action = sc_consensus::StateAction::ApplyChanges(
-                                sc_consensus::StorageChanges::Changes(storage_changes)
+                                sc_consensus::StorageChanges::Changes(tpl.storage_changes),
                             );
-                            
+
                             match block_import.import_block(import_params).await {
-                                Ok(_) => {
-                                    // announce_block disabled - rely on import notifications
-                                    log::info!(
-                                        "✅ Block #{} mined! hash={:?} difficulty={}",
-                                        parent_number + 1,
-                                        header_hash,
-                                        difficulty
-                                    );
-                                    consecutive_propose_failures = 0;
-                                }
-                                Err(e) => {
-                                    log::error!("❌ Failed to import block: {:?}", e);
-                                }
+                                Ok(r) => log::info!("✅ mined import_result={:?} job_id={} height={} pre_hash={:?}", r, tpl.job_id, tpl.height, tpl.pre_hash),
+                                Err(e) => log::error!("❌ Failed to import mined block job_id={} height={} err={:?}", tpl.job_id, tpl.height, e),
                             }
-                        }
-                        _ => {
-                            log::debug!(
-                                "⏳ No valid nonce found for block #{} (difficulty: {})",
-                                parent_number + 1,
-                                difficulty
-                            );
-                        }
-                    }
-                    // ═══════════════════════════════════════════════════════════════════
-                    // P2POOL: Process shares and gossip (stale-tolerant)
-                    // ═══════════════════════════════════════════════════════════════════
-                    if pool_mode {
-                        // 1) Receive shares from peers
-                        if let Some(ref mut gossip) = pool_gossip.as_mut() {
-                            loop {
-                                match gossip.rx_in.try_recv() {
-                                    Ok(remote_share) => {
-                                        sharechain.lock().unwrap().insert(remote_share);
+
+                            // re-arm if cache empty
+                            if templates.len() == 0 {
+                                if let Some(best_hash) = active_best_hash {
+                                    match mining_client.header(best_hash) {
+                                        Ok(Some(best_header)) => {
+                                            let new_job_id = next_job_id(&mut miner_state.job_id);
+
+                                            let parent_hash: H256 = best_header.hash();
+                                            let parent_number: u32 = (*best_header.number()).into();
+                                            let height: u64 = (parent_number as u64) + 1;
+
+                                            let difficulty: u128 = read_difficulty_from_storage(&*mining_client, parent_hash);
+                                            let target: H256 = difficulty_to_target(difficulty);
+                                            let share_difficulty = (difficulty / SHARE_DIFFICULTY_DIVISOR).max(1);
+                                            let share_target: H256 = difficulty_to_target(share_difficulty);
+
+                                            let seed_height_val: u64 = seed_sched::seed_height(height);
+                                            if let Err(e) = rx_lx_pow.maybe_reseed(height, &get_block_hash) {
+                                                log::error!("❌ RX-LX reseed failed on re-arm: {}", e);
+                                                continue;
+                                            }
+                                            let seed: H256 = rx_lx_pow.seed;
+
+                                            use sp_inherents::InherentDataProvider;
+                                            let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
+                                            let inherent_data = match timestamp.create_inherent_data().await {
+                                                Ok(d) => d,
+                                                Err(e) => {
+                                                    log::warn!("Re-arm: failed to create inherent data: {:?}", e);
+                                                    continue;
+                                                }
+                                            };
+
+                                            let digest = miner_digest_for_template(miner_address);
+
+                                            let proposer = match proposer_factory.init(&best_header).await {
+                                                Ok(p) => p,
+                                                Err(e) => {
+                                                    log::warn!("Re-arm: proposer_factory.init failed: {:?}", e);
+                                                    continue;
+                                                }
+                                            };
+
+                                            let proposal = match proposer.propose(inherent_data, digest, Duration::from_millis(800), None).await {
+                                                Ok(p) => p,
+                                                Err(e) => {
+                                                    log::warn!("Re-arm: proposer.propose failed: {:?}", e);
+                                                    continue;
+                                                }
+                                            };
+
+                                            let (block, storage_changes) = (proposal.block, proposal.storage_changes);
+                                            let (header, body) = block.deconstruct();
+
+                                            let mut header_no_seal = header.clone();
+                                            header_no_seal.digest_mut().logs.retain(|d| {
+                                                !matches!(d, DigestItem::Seal(id, _) if *id == LUMENYX_ENGINE_ID)
+                                            });
+
+                                            let pre_hash: H256 = header_no_seal.hash();
+
+                                            let tpl = PowTemplate {
+                                                job_id: new_job_id,
+                                                height,
+                                                parent_hash,
+                                                header_no_seal,
+                                                body,
+                                                storage_changes,
+                                                pre_hash,
+                                                target,
+                                                share_target,
+                                                seed_height: seed_height_val,
+                                                seed,
+                                            };
+
+                                            let job = MiningJob {
+                                                job_id: tpl.job_id,
+                                                height: tpl.height,
+                                                parent_hash: tpl.parent_hash,
+                                                pre_hash: tpl.pre_hash,
+                                                target: tpl.target,
+                                                share_target: tpl.share_target,
+                                                seed_height: tpl.seed_height,
+                                                seed: tpl.seed,
+                                            };
+
+                                            templates.insert(tpl);
+                                            let _ = miner_state.job_tx.send(job);
+
+                                            log::info!(
+                                                "⛏️ Re-armed mining: #{} parent={:?} job_id={} pre_hash={:?} difficulty={}",
+                                                job.height, job.parent_hash, job.job_id, job.pre_hash, difficulty
+                                            );
+                                        }
+                                        Ok(None) => log::warn!("re-arm: best_header not found for hash={:?}", best_hash),
+                                        Err(e) => log::error!("re-arm: mining_client.header failed: {:?}", e),
                                     }
-                                    Err(mpsc::error::TryRecvError::Empty) => break,
-                                    Err(mpsc::error::TryRecvError::Disconnected) => break,
                                 }
-                            }
-                        }
-                        // 2) Drain local shares from workers (accept even if job_id changed)
-                        loop {
-                            match miner_state.found_share_rx.try_recv() {
-                                Ok(share_found) => {
-                                    let best_hash_now = mining_client.info().best_hash;
-                                    let fresh = is_recent_parent(
-                                        &*mining_client,
-                                        share_found.parent_hash,
-                                        best_hash_now,
-                                        SHARE_STALE_DEPTH,
-                                    );
-                                    log::info!(
-                                        "🏊 Share from worker: job={} height={} parent={:?} fresh={} (current_job={})",
-                                        share_found.job_id,
-                                        share_found.height,
-                                        share_found.parent_hash,
-                                        fresh,
-                                        job_id
-                                    );
-                                    if !fresh {
-                                        continue;
-                                    }
-                                    let pool_share = PoolShare {
-                                        id: H256::zero(),
-                                        prev: sharechain.lock().unwrap().best_tip().unwrap_or(H256::zero()),
-                                        main_parent: share_found.parent_hash,
-                                        miner: miner_address,
-                                        share_difficulty,
-                                        nonce: share_found.nonce,
-                                        timestamp_ms: std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                            .as_millis() as u64,
-                                    };
-                                    let share_with_id = PoolShare {
-                                        id: pool_share.compute_id(),
-                                        ..pool_share
-                                    };
-                                    sharechain.lock().unwrap().insert(share_with_id.clone());
-                                    if let Some(ref gossip) = pool_gossip {
-                                        let _ = gossip.tx_out.send(share_with_id.clone());
-                                        log::info!("🏊 Share accepted+broadcast id={:?}", share_with_id.id);
-                                    }
-                                }
-                                Err(mpsc::error::TryRecvError::Empty) => break,
-                                Err(mpsc::error::TryRecvError::Disconnected) => break,
                             }
                         }
                     }
