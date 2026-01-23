@@ -431,14 +431,13 @@ impl MinerState {
                         .as_nanos() as u64;
                     local_nonce[0..8].copy_from_slice(&seed_time.to_le_bytes());
                     local_nonce[8..16].copy_from_slice(&(thread_id as u64).to_le_bytes());
+                    let mut last_processed_job_id: u64 = 0;
                     loop {
-                        // Non bloccare se c'è già un update pendente
-                        if !job_rx.has_changed().unwrap_or(false) {
-                            if futures::executor::block_on(job_rx.changed()).is_err() {
-                                return;
-                            }
-                        }
+                        // Poll for new job
+                        std::thread::sleep(std::time::Duration::from_micros(100));
                         let job = *job_rx.borrow_and_update();
+                        if job.job_id == 0 || job.job_id == last_processed_job_id { continue; }
+                        last_processed_job_id = job.job_id;
                         log::info!("Worker {}: new job_id={} height={}", thread_id, job.job_id, job.height);
 
                         if job.seed_height != last_seed_height {
