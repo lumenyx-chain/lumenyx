@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v2.1.5 - Auto Binary Update Fix
+# LUMENYX SETUP SCRIPT v2.1.6 - Auto Binary Update Fix
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
-VERSION="2.1.5"
-SCRIPT_VERSION="2.1.5"
+VERSION="2.1.6"
+SCRIPT_VERSION="2.1.6"
 
 # Colors
 RED='\033[0;31m'
@@ -47,7 +47,7 @@ SUBSTRATE_DASH_PY="$HELPERS_DIR/substrate_dashboard.py"
 SUBSTRATE_TX_PY="$HELPERS_DIR/substrate_tx.py"
 
 # Download URLs
-BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-linux-x86_64"
+BINARY_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node"
 CHECKSUM_URL="https://github.com/lumenyx-chain/lumenyx/releases/download/v${VERSION}/lumenyx-node-sha256.txt"
 BOOTNODES_URL="https://raw.githubusercontent.com/lumenyx-chain/lumenyx/main/bootnodes.txt"
 
