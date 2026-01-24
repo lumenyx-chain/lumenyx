@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v2.1.10 - Auto Binary Update Fix
+# LUMENYX SETUP SCRIPT v2.1.11 - Auto Binary Update Fix
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
-VERSION="2.1.10"
-SCRIPT_VERSION="2.1.10"
+VERSION="2.1.11"
+SCRIPT_VERSION="2.1.11"
 
 # Colors
 RED='\033[0;31m'
