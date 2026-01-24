@@ -1,6 +1,6 @@
 [package]
 name = "lumenyx-node"
-version = "2.1.6"
+version = "2.1.11"
 edition = "2021"
 build = "build.rs"
 

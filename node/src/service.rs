@@ -1105,7 +1105,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                 let mut import_stream = mining_client.import_notification_stream();
                 let mut active_best_hash: Option<H256> = None;
                 let mut templates: TemplateLru2 = TemplateLru2::new();
-                let mut share_drain_tick = tokio::time::interval(Duration::from_millis(100));
+                let mut share_drain_tick = tokio::time::interval(Duration::from_millis(500));
                 share_drain_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
                 // Bootstrap: template sul best attuale
@@ -1343,12 +1343,31 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                         }
 
                         _ = share_drain_tick.tick(), if pool_mode => {
-                            // 1) Receive shares from peers
+                            // Con 10–20 share/s questi limiti tengono bounded il lavoro nel tick
+                            const MAX_REMOTE_PER_TICK: usize = 50;
+                            const MAX_LOCAL_PER_TICK: usize = 50;
+
+                            // 0) Snapshot del tip UNA VOLTA per tick
+                            let best_hash_now = mining_client.info().best_hash;
+
+                            // 1 DB read per tick: best height (Number = u32)
+                            let best_height_now: u64 = match mining_client.header(best_hash_now) {
+                                Ok(Some(hdr)) => *hdr.number() as u64,
+                                _ => 0,
+                            };
+
+                            // 1 DB read per tick: difficulty (riusata per tutte le share accettate in questo tick)
+                            let difficulty_now: u128 = read_difficulty_from_storage(&*mining_client, best_hash_now);
+                            let share_difficulty: u128 = (difficulty_now / SHARE_DIFFICULTY_DIVISOR).max(1);
+
+                            // 1) Receive shares from peers (bounded)
                             if let Some(ref mut gossip) = pool_gossip.as_mut() {
-                                loop {
+                                let mut n_remote = 0usize;
+                                while n_remote < MAX_REMOTE_PER_TICK {
                                     match gossip.rx_in.try_recv() {
                                         Ok(remote_share) => {
                                             sharechain.lock().unwrap().insert(remote_share);
+                                            n_remote += 1;
                                         }
                                         Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                                         Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
@@ -1356,39 +1375,39 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                                 }
                             }
 
-                            // 2) Drain local shares from workers (accept even if job_id changed)
-                            loop {
+                            // 2) Drain local shares from workers (bounded)
+                            let mut n_local = 0usize;
+                            while n_local < MAX_LOCAL_PER_TICK {
                                 match miner_state.found_share_rx.try_recv() {
                                     Ok(share_found) => {
-                                        let best_hash_now = mining_client.info().best_hash;
-                                        let fresh = is_recent_parent(
-                                            &*mining_client,
-                                            share_found.parent_hash,
-                                            best_hash_now,
-                                            SHARE_STALE_DEPTH,
-                                        );
+                                        n_local += 1;
+
+                                        // Freshness O(1):
+                                        let fresh = share_found.height + SHARE_STALE_DEPTH >= best_height_now;
 
                                         log::info!(
-                                            "🏊 Share from worker: job={} height={} parent={:?} fresh={} (current_job={})",
+                                            "🏊 Share from worker: job={} height={} parent={:?} fresh={} (current_job={}) best_height_now={}",
                                             share_found.job_id,
                                             share_found.height,
                                             share_found.parent_hash,
                                             fresh,
-                                            miner_state.job_id
+                                            miner_state.job_id,
+                                            best_height_now
                                         );
 
                                         if !fresh {
                                             continue;
                                         }
 
-                                        let difficulty_now: u128 =
-                                            read_difficulty_from_storage(&*mining_client, best_hash_now);
-                                        let share_difficulty: u128 =
-                                            (difficulty_now / SHARE_DIFFICULTY_DIVISOR).max(1);
+                                        let prev = sharechain
+                                            .lock()
+                                            .unwrap()
+                                            .best_tip()
+                                            .unwrap_or(H256::zero());
 
                                         let pool_share = PoolShare {
                                             id: H256::zero(),
-                                            prev: sharechain.lock().unwrap().best_tip().unwrap_or(H256::zero()),
+                                            prev,
                                             main_parent: share_found.parent_hash,
                                             miner: miner_address,
                                             share_difficulty,
@@ -1398,6 +1417,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                                                 .unwrap_or_default()
                                                 .as_millis() as u64,
                                         };
+
                                         let share_with_id = PoolShare {
                                             id: pool_share.compute_id(),
                                             ..pool_share

@@ -1335,12 +1335,12 @@ daemon_guard_rails_or_die() {
     [[ -s "$DAEMON_WALLET_TXT" ]] || { echo -e "${RED}ERROR:${NC} Missing wallet.txt: $DAEMON_WALLET_TXT"; return 1; }
     [[ -d "$DAEMON_KEYSTORE_DIR" ]] || { echo -e "${RED}ERROR:${NC} Missing keystore dir: $DAEMON_KEYSTORE_DIR"; return 1; }
 
-    # Require keystore not empty (directory exists is not enough)
-    if ! ls -1 "$DAEMON_KEYSTORE_DIR"/* >/dev/null 2>&1; then
-        echo -e "${RED}ERROR:${NC} Keystore directory is empty: $DAEMON_KEYSTORE_DIR"
-        echo -e "${YELLOW}Hint:${NC} Start in normal mode once or import/insert keys, then retry daemon mode."
-        return 1
-    fi
+#POW_FIX:     # Require keystore not empty (directory exists is not enough)
+#POW_FIX:     if ! ls -1 "$DAEMON_KEYSTORE_DIR"/* >/dev/null 2>&1; then
+#POW_FIX:         echo -e "${RED}ERROR:${NC} Keystore directory is empty: $DAEMON_KEYSTORE_DIR"
+#POW_FIX:         echo -e "${YELLOW}Hint:${NC} Start in normal mode once or import/insert keys, then retry daemon mode."
+#POW_FIX:         return 1
+#POW_FIX:     fi
 
     # Ensure logfile directory exists (watchdog expects it)
     mkdir -p "$DAEMON_HOME/.lumenyx" >/dev/null 2>&1 || true
