@@ -6,7 +6,7 @@
 
 set -e
 
-VERSION="2.1.11"
+VERSION="2.1.12"
 SCRIPT_VERSION="2.1.11"
 
 # Colors
@@ -1361,6 +1361,32 @@ create_systemd_service() {
         threads_env="Environment=LUMENYX_MINING_THREADS=$threads"
     fi
 
+
+    # Build bootnode args (same logic as start_node)
+    local bootnode_args="" bootnodes=""
+    if [[ -n "${BOOTNODES:-}" ]]; then
+        bootnodes="$BOOTNODES"
+    elif [[ -f "$LUMENYX_DIR/bootnodes.conf" ]]; then
+        bootnodes=$(cat "$LUMENYX_DIR/bootnodes.conf" 2>/dev/null)
+    else
+        bootnodes=$(curl -sL "$BOOTNODES_URL" 2>/dev/null | grep -v '^#' | grep -v '^$' | tr '\n' ' ')
+    fi
+    if [[ -n "$bootnodes" ]]; then
+        for bn in $bootnodes; do
+            bootnode_args="$bootnode_args --bootnodes $bn"
+        done
+    fi
+
+    # Reserved nodes: mantiene connessione stabile in rete piccola
+    local reserved_nodes_args=""
+    if [[ -n "$bootnodes" ]]; then
+        for bn in $bootnodes; do
+            reserved_nodes_args="$reserved_nodes_args --reserved-nodes $bn"
+        done
+    fi
+
+    # RPC flags (same as normal mode)
+    local rpc_args="--rpc-cors all --unsafe-rpc-external --rpc-methods Unsafe"
     # IMPORTANT:
     # - systemd does not expand "~"
     # - pin --base-path so keystore is stable
@@ -1381,7 +1407,7 @@ ExecStartPre=/usr/bin/test -s $DAEMON_WALLET_TXT
 ExecStartPre=/usr/bin/test -d $DAEMON_KEYSTORE_DIR
 ExecStartPre=/bin/sh -c 'ls -1 $DAEMON_KEYSTORE_DIR/* >/dev/null 2>&1'
 
-ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH --validator${pool_flag}
+ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH --validator${pool_flag} $rpc_args $bootnode_args $reserved_nodes_args
 
 Restart=always
 RestartSec=3
