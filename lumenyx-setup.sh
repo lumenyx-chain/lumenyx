@@ -6,7 +6,7 @@
 
 set -e
 
-VERSION="2.1.12"
+VERSION="2.1.13"
 SCRIPT_VERSION="2.1.11"
 
 # Colors
@@ -1115,6 +1115,14 @@ start_node() {
         done
     fi
 
+    # Reserved nodes: pin bootnodes for stable connection in small networks
+    local reserved_args=""
+    if [[ -n "$bootnodes" ]]; then
+        for bn in $bootnodes; do
+            reserved_args="$reserved_args --reserved-nodes $bn"
+        done
+    fi
+
     # Ensure log file exists
     mkdir -p "$LUMENYX_DIR"
     touch "$LOG_FILE"
@@ -1143,6 +1151,7 @@ start_node() {
         --unsafe-rpc-external \
         --rpc-methods Unsafe \
         $bootnode_args \
+        $reserved_args \
         >> "$LOG_FILE" 2>&1 &
 
     echo $! > "$PID_FILE"
