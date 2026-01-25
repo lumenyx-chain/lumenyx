@@ -1160,6 +1160,7 @@ start_node() {
         --base-path "$DATA_DIR" \
         --chain mainnet \
         --validator \
+        --state-pruning 256 \
         $(pool_is_enabled && echo "--pool-mode") \
         --rpc-cors all \
         --unsafe-rpc-external \
@@ -1433,7 +1434,7 @@ WorkingDirectory=$DAEMON_HOME
 
 ExecStartPre=/usr/bin/test -s $DAEMON_WALLET_TXT
 
-ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH --validator${pool_flag} $rpc_args $bootnode_args $reserved_nodes_args
+ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH --validator --state-pruning 256${pool_flag} $rpc_args $bootnode_args $reserved_nodes_args
 
 Restart=always
 RestartSec=3
@@ -2254,3 +2255,4 @@ main() {
 }
 
 main "$@"
+
