@@ -6,7 +6,7 @@
 
 set -e
 
-VERSION="2.1.13"
+VERSION="2.1.14"
 SCRIPT_VERSION="2.1.11"
 
 # Colors
@@ -1144,6 +1144,7 @@ start_node() {
     print_info "Starting node..."
 
     nohup "$LUMENYX_DIR/$BINARY_NAME" \
+        --base-path "$DATA_DIR" \
         --chain mainnet \
         --validator \
         $(pool_is_enabled && echo "--pool-mode") \
