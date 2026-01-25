@@ -6,7 +6,7 @@
 
 set -e
 
-VERSION="2.2.0"
+VERSION="2.2.1"
 SCRIPT_VERSION="2.1.11"
 
 # Colors
@@ -1361,7 +1361,7 @@ daemon_guard_rails_or_die() {
     # Fail fast: NEVER allow systemd to start if wallet/keystore missing
     [[ -x "$DAEMON_BIN" ]] || { echo -e "${RED}ERROR:${NC} Missing binary: $DAEMON_BIN"; return 1; }
     [[ -s "$DAEMON_WALLET_TXT" ]] || { echo -e "${RED}ERROR:${NC} Missing wallet.txt: $DAEMON_WALLET_TXT"; return 1; }
-    [[ -d "$DAEMON_KEYSTORE_DIR" ]] || { echo -e "${RED}ERROR:${NC} Missing keystore dir: $DAEMON_KEYSTORE_DIR"; return 1; }
+    [[ -f "$DAEMON_BASE_PATH/miner-key" ]] || { echo -e "${RED}ERROR:${NC} Missing miner-key: $DAEMON_BASE_PATH/miner-key"; return 1; }
 
 #POW_FIX:     # Require keystore not empty (directory exists is not enough)
 #POW_FIX:     if ! ls -1 "$DAEMON_KEYSTORE_DIR"/* >/dev/null 2>&1; then
@@ -1432,8 +1432,6 @@ Group=$DAEMON_USER
 WorkingDirectory=$DAEMON_HOME
 
 ExecStartPre=/usr/bin/test -s $DAEMON_WALLET_TXT
-ExecStartPre=/usr/bin/test -d $DAEMON_KEYSTORE_DIR
-ExecStartPre=/bin/sh -c 'ls -1 $DAEMON_KEYSTORE_DIR/* >/dev/null 2>&1'
 
 ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH --validator${pool_flag} $rpc_args $bootnode_args $reserved_nodes_args
 
