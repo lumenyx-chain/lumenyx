@@ -6,7 +6,7 @@
 
 set -e
 
-VERSION="2.2.1"
+VERSION="2.2.2"
 SCRIPT_VERSION="2.1.11"
 
 # Colors
@@ -1890,6 +1890,13 @@ print_dashboard() {
     echo -e "  Block:    $block_display"
     echo -e "  Status:   ${status_color} ${status}${NC}"
     echo -e "  Peers:    $peers"
+    if [[ "$syncing" == "True" ]]; then
+        echo -e "  Network:  ${YELLOW}⚠ Syncing...${NC}"
+    elif [[ "$peers" == "offline" ]]; then
+        echo -e "  Network:  ${RED}✗ Offline${NC}"
+    else
+        echo -e "  Network:  ${GREEN}✓ Synced${NC}"
+    fi
     echo -e "  Threads:  ${CYAN}$threads_display${NC}"
     echo ""
     echo "════════════════════════════════════════════════════════════════════"
