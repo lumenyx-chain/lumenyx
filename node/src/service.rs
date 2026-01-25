@@ -13,6 +13,7 @@ use sp_runtime::generic::DigestItem;
 
 use futures::StreamExt;
 use tokio::sync::{mpsc, watch};
+use crate::pool_mode_handle::{PoolModeHandle, SharedPoolMode};
 
 use lumenyx_runtime::{self, opaque::Block, RuntimeApi};
 use sc_client_api::{AuxStore, BlockBackend, BlockchainEvents, HeaderBackend, StorageProvider};
@@ -116,14 +117,14 @@ struct PoolPayoutDigest {
 const POOL_PAYOUT_DIGEST_TAG: &[u8; 4] = b"PPLN";
 
 fn prepare_pool_payout_digest_item(
-    pool_mode: bool,
+    pool_mode: &SharedPoolMode,
     parent_number: u32,
     sharechain: &std::sync::Arc<std::sync::Mutex<Sharechain>>,
 ) -> Option<sp_runtime::generic::DigestItem> {
     // -------------------- P2Pool PPLNS payout digest (CALCOLATO PRIMA DEL MINING) --------------------
     let mut pool_payout_digest_item: Option<sp_runtime::generic::DigestItem> = None;
 
-    if pool_mode {
+    if pool_mode.get() {
         let block_u32: u32 = parent_number + 1;
         let block_reward: u128 = lumenyx_primitives::calculate_block_reward(block_u32);
 
@@ -839,6 +840,8 @@ pub fn new_partial(
 }
 
 pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, ServiceError> {
+    // Create pool mode handle for runtime toggle
+    let (pool_mode_handle, pool_mode_rx) = PoolModeHandle::new(pool_mode);
     let sc_service::PartialComponents {
         client,
         backend,
@@ -857,7 +860,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
     >::new(&config.network, config.prometheus_registry().cloned());
 
     // P2Pool: Register pool protocol if pool_mode
-    let pool_notification_service = if pool_mode {
+    let pool_notification_service = if pool_mode_handle.get() {
         let pool_protocol: sc_network::ProtocolName = POOL_PROTO_NAME.into();
         let (pool_config, pool_notif_service) = sc_network::config::NonDefaultSetConfig::new(
             pool_protocol.clone(),
@@ -969,6 +972,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
         let filter_pool = filter_pool.clone();
         let fee_history_cache = fee_history_cache.clone();
         let pubsub_notification_sinks = pubsub_notification_sinks.clone();
+        let pool_mode_handle = pool_mode_handle.clone();
 
         Box::new(move |subscription_task_executor| {
             let eth_deps = crate::rpc::EthDeps {
@@ -1002,6 +1006,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                 client: client.clone(),
                 pool: pool.clone(),
                 deny_unsafe: sc_rpc::DenyUnsafe::No,
+                pool_mode: pool_mode_handle.clone(),
                 eth: eth_deps,
             };
 
@@ -1067,6 +1072,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
             TotalDifficultySelectChain::new(select_chain.clone(), client.clone());
         let mining_sync_service = sync_service.clone();
         let mining_tx_pool = transaction_pool.clone();
+        let pool_mode_handle = pool_mode_handle.clone();
 
         task_manager.spawn_handle().spawn_blocking(
             "pow-miner",
@@ -1172,7 +1178,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
 
 
                     let pool_payout_digest_item =
-                        prepare_pool_payout_digest_item(pool_mode, parent_number, &sharechain);
+                        prepare_pool_payout_digest_item(&pool_mode_handle, parent_number, &sharechain);
 
                     let mut header_no_seal = header.clone();
 
@@ -1294,7 +1300,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
 
 
                     let pool_payout_digest_item =
-                        prepare_pool_payout_digest_item(pool_mode, parent_number, &sharechain);
+                        prepare_pool_payout_digest_item(&pool_mode_handle, parent_number, &sharechain);
 
                             let mut header_no_seal = header.clone();
 
@@ -1342,7 +1348,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
                             );
                         }
 
-                        _ = share_drain_tick.tick(), if pool_mode => {
+                        _ = share_drain_tick.tick(), if *pool_mode_rx.borrow() => {
                             // Con 10–20 share/s questi limiti tengono bounded il lavoro nel tick
                             const MAX_REMOTE_PER_TICK: usize = 50;
                             const MAX_LOCAL_PER_TICK: usize = 50;
@@ -1529,7 +1535,7 @@ pub fn new_full(config: Configuration, pool_mode: bool) -> Result<TaskManager, S
 
 
                     let pool_payout_digest_item =
-                        prepare_pool_payout_digest_item(pool_mode, parent_number, &sharechain);
+                        prepare_pool_payout_digest_item(&pool_mode_handle, parent_number, &sharechain);
 
                                             let mut header_no_seal = header.clone();
 

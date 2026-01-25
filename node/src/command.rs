@@ -147,8 +147,16 @@ pub fn run() -> sc_cli::Result<()> {
                 let _ = std::fs::write(&secret_key_path, keypair.to_raw_vec());
             }
 
-            // Capture pool_mode flag
-            let pool_mode = cli.pool_mode;
+            // Capture pool_mode flag - use persisted value if exists
+            use crate::pool_mode_handle::read_persisted_pool_mode;
+            let pool_mode = match read_persisted_pool_mode() {
+                Ok(Some(v)) => v,         // override CLI if file exists
+                Ok(None) => cli.pool_mode, // use CLI flag
+                Err(e) => {
+                    eprintln!("WARN: cannot read persisted pool mode: {e}");
+                    cli.pool_mode
+                }
+            };
 
             let runner = cli.create_runner(&cli.run)?;
             runner.run_node_until_exit(|config| async move {

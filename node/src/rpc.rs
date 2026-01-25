@@ -4,6 +4,7 @@
 //! MetaMask and all Ethereum tools connect via eth_* methods.
 
 use std::{collections::BTreeMap, sync::Arc};
+use crate::pool_mode_handle::{SharedPoolMode, write_persisted_pool_mode};
 
 use jsonrpsee::RpcModule;
 use lumenyx_runtime::{AccountId, Balance, Hash, Nonce};
@@ -83,6 +84,8 @@ pub struct FullDeps<C, P, A: ChainApi, CT, CIDP> {
     pub pool: Arc<P>,
     /// Whether to deny unsafe calls
     pub deny_unsafe: DenyUnsafe,
+    /// Pool mode handle for runtime toggle
+    pub pool_mode: SharedPoolMode,
     /// Ethereum dependencies
     pub eth: EthDeps<C, P, A, CT, CIDP>,
 }
@@ -135,6 +138,7 @@ where
         client,
         pool,
         deny_unsafe,
+        pool_mode,
         eth,
     } = deps;
 
@@ -236,5 +240,24 @@ where
     // TxPool RPC - txpool_status, txpool_inspect, txpool_content
     io.merge(TxPool::new(client, graph).into_rpc())?;
 
+
+    // LUMENYX Pool Mode RPC - lumenyx_setPoolMode, lumenyx_getPoolMode
+    let pool_mode_handle = pool_mode.clone();
+    let pool_mode_handle2 = pool_mode.clone();
+    io.register_method("lumenyx_getPoolMode", move |_, _, _| {
+        Ok::<bool, jsonrpsee::types::ErrorObjectOwned>(pool_mode_handle.get())
+    })?;
+    io.register_method("lumenyx_setPoolMode", move |params, _, _| {
+        let enabled: bool = params.one()?;
+        pool_mode_handle2.set(enabled);
+        if let Err(e) = write_persisted_pool_mode(enabled) {
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                -32000,
+                format!("failed to persist pool mode: {e}"),
+                None::<()>,
+            ));
+        }
+        Ok::<bool, jsonrpsee::types::ErrorObjectOwned>(pool_mode_handle2.get())
+    })?;
     Ok(io)
 }

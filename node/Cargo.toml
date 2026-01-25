@@ -1,10 +1,11 @@
 [package]
 name = "lumenyx-node"
-version = "2.1.11"
+version = "2.2.0"
 edition = "2021"
 build = "build.rs"
 
 [dependencies]
+dirs = "5"
 hex = "0.4"
 parking_lot = "0.12"
 async-channel = "2.0.0"

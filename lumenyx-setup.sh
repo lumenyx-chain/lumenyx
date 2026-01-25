@@ -6,7 +6,7 @@
 
 set -e
 
-VERSION="2.1.14"
+VERSION="2.2.0"
 SCRIPT_VERSION="2.1.11"
 
 # Colors
@@ -348,6 +348,19 @@ rpc_call() {
     done
 
     echo ""
+    return 1
+}
+
+# Set pool mode via RPC (no restart needed)
+rpc_set_pool_mode() {
+    local enabled="$1"  # true or false
+    local result
+    result=$(curl -s -m 5 -H "Content-Type: application/json" \
+        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"lumenyx_setPoolMode\",\"params\":[$enabled]}" \
+        "$RPC" 2>/dev/null)
+    if [[ -n "$result" ]] && [[ "$result" == *"result"* ]]; then
+        return 0
+    fi
     return 1
 }
 
@@ -1235,19 +1248,23 @@ pool_disable() {
 # Toggle functions for quick mode switching
 toggle_solo_mode() {
     if ! pool_is_enabled; then
-        # Already in SOLO mode
         echo ""
         echo -e "${GREEN}✓ Already in SOLO mode${NC}"
         sleep 1
         return
     fi
-    
-    # Switch to SOLO
+    # Try RPC first (no restart needed)
+    if node_running && rpc_set_pool_mode false; then
+        rm -f "$POOL_CONF"
+        echo ""
+        echo -e "${GREEN}✓ Switched to SOLO mode (no restart)${NC}"
+        sleep 1
+        return
+    fi
+    # Fallback: update config and restart
     rm -f "$POOL_CONF"
     echo ""
     echo -e "${GREEN}✓ Switched to SOLO mode${NC}"
-    
-    # Restart node if running
     if node_running; then
         echo -e "${YELLOW}Restarting node with SOLO mode...${NC}"
         stop_node
@@ -1256,26 +1273,27 @@ toggle_solo_mode() {
     fi
     sleep 1
 }
-
 toggle_pool_mode() {
     if pool_is_enabled; then
-        # Already in POOL mode
         echo ""
         echo -e "${GREEN}✓ Already in POOL mode${NC}"
         sleep 1
         return
     fi
-    
-    # Switch to POOL
+    # Try RPC first (no restart needed)
+    if node_running && rpc_set_pool_mode true; then
+        mkdir -p "$LUMENYX_DIR"
+        echo "POOL_MODE=1" > "$POOL_CONF"
+        echo ""
+        echo -e "${GREEN}✓ Switched to POOL mode (no restart)${NC}"
+        sleep 1
+        return
+    fi
+    # Fallback: update config and restart
     mkdir -p "$LUMENYX_DIR"
-    cat > "$POOL_CONF" <<EOF
-# LUMENYX Pool Configuration
-POOL_MODE=1
-EOF
+    echo "POOL_MODE=1" > "$POOL_CONF"
     echo ""
     echo -e "${GREEN}✓ Switched to POOL mode${NC}"
-    
-    # Restart node if running
     if node_running; then
         echo -e "${YELLOW}Restarting node with POOL mode...${NC}"
         stop_node
