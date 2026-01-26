@@ -1164,6 +1164,8 @@ start_node() {
         --rpc-cors all \
         --unsafe-rpc-external \
         --rpc-methods Unsafe \
+        --state-pruning 250000 \
+        --blocks-pruning 250000 \
         $bootnode_args \
         $reserved_args \
         >> "$LOG_FILE" 2>&1 &
@@ -1433,7 +1435,7 @@ WorkingDirectory=$DAEMON_HOME
 
 ExecStartPre=/usr/bin/test -s $DAEMON_WALLET_TXT
 
-ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH --validator${pool_flag} $rpc_args $bootnode_args $reserved_nodes_args
+ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH --validator${pool_flag} --state-pruning 250000 --blocks-pruning 250000 $rpc_args $bootnode_args $reserved_nodes_args
 
 Restart=always
 RestartSec=3
