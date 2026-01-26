@@ -60,8 +60,8 @@ Browsers block insecure WebSocket by default. Use Firefox with this fix:
 5. You will see it set to "false"
 6. Click the arrows icon on the right to change it to "true"
 7. Close Firefox completely and reopen it
-8. Go to: https://polkadot.js.org/apps/?rpc=ws://IP:9944
-   (Replace IP with your node's IP address, e.g. 192.168.1.100)
+8. Go to: https://polkadot.js.org/apps/?rpc=ws://207.180.204.4:9944
+   (This is the public Archive node. Or use your own node's IP.)
 9. Wait a few seconds - you'll see "LUMENYX Mainnet" in top left
 
 Now you can see blocks, validators, balances, everything.
