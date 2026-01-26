@@ -98,12 +98,12 @@ cd ~/lumenyx
 
 ### Full Node (sync only)
 ```bash
-./target/release/lumenyx-node --chain mainnet --state-pruning 256 --blocks-pruning 70000 --bootnodes "/ip4/IP/tcp/30333/p2p/PEER_ID" --name "your-node"
+./target/release/lumenyx-node --chain mainnet --bootnodes "/ip4/IP/tcp/30333/p2p/PEER_ID" --name "your-node"
 ```
 
 ### Miner
 ```bash
-./target/release/lumenyx-node --chain mainnet --validator --state-pruning 256 --blocks-pruning 70000 --bootnodes "/ip4/IP/tcp/30333/p2p/PEER_ID" --name "your-miner"
+./target/release/lumenyx-node --chain mainnet --validator --bootnodes "/ip4/IP/tcp/30333/p2p/PEER_ID" --name "your-miner"
 ```
 
 That's it. You're mining.
@@ -117,8 +117,6 @@ That's it. You're mining.
 | `--chain mainnet` | Mainnet |
 | `--chain dev` | Development mode |
 | `--validator` | Enable mining |
-| `--state-pruning 256` | Keep state lightweight (recommended) |
-| `--blocks-pruning 70000` | Keep only ~48 hours of blocks (~3GB) |
 | `--name "name"` | Node name |
 | `--bootnodes "addr"` | Connect to bootnode |
 | `--rpc-cors all` | Allow RPC from any origin |
@@ -189,4 +187,3 @@ When you start with `--validator`, the node automatically creates a mining walle
 No registration. No staking. No permission.
 
 Just run and mine.
-
