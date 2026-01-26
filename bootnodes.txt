@@ -1,2 +1,1 @@
-# CHAIN RESTARTING - New bootnodes coming soon
-# Check BitcoinTalk for updates
+/ip4/207.180.204.4/tcp/30333/p2p/12D3KooWHRMGZLj8LSuwFYAXUoKCKSwcuQuhaVjfLJRGjL9F7Hp8
