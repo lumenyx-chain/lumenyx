@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v2.1.12 - Add blocks-pruning for lightweight nodes
+# LUMENYX SETUP SCRIPT v2.1.11 - Auto Binary Update Fix
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
 VERSION="2.2.3"
-SCRIPT_VERSION="2.1.12"
+SCRIPT_VERSION="2.1.11"
 
 # Colors
 RED='\033[0;31m'
@@ -1160,8 +1160,6 @@ start_node() {
         --base-path "$DATA_DIR" \
         --chain mainnet \
         --validator \
-        --state-pruning 256 \
-        --blocks-pruning 70000 \
         $(pool_is_enabled && echo "--pool-mode") \
         --rpc-cors all \
         --unsafe-rpc-external \
@@ -1435,7 +1433,7 @@ WorkingDirectory=$DAEMON_HOME
 
 ExecStartPre=/usr/bin/test -s $DAEMON_WALLET_TXT
 
-ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH --validator --state-pruning 256 --blocks-pruning 70000${pool_flag} $rpc_args $bootnode_args $reserved_nodes_args
+ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH --validator${pool_flag} $rpc_args $bootnode_args $reserved_nodes_args
 
 Restart=always
 RestartSec=3
@@ -2256,4 +2254,3 @@ main() {
 }
 
 main "$@"
-
