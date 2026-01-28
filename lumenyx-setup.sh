@@ -6,8 +6,8 @@
 
 set -e
 
-VERSION="2.2.3"
-SCRIPT_VERSION="2.2.3"
+VERSION="2.2.4"
+SCRIPT_VERSION="2.2.4"
 
 # Colors
 RED='\033[0;31m'
