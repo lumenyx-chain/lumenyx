@@ -7,11 +7,9 @@
 //! - Distribution: 100% through mining
 //! - No pre-allocations. Pure fair launch.
 
-use frame_support::PalletId;
 use lumenyx_runtime::{AccountId, Signature, WASM_BINARY};
 use sc_service::ChainType;
 use sp_core::{sr25519, Pair, Public};
-use sp_runtime::traits::AccountIdConversion;
 use sp_runtime::traits::{IdentifyAccount, Verify};
 
 pub type ChainSpec = sc_service::GenericChainSpec;
@@ -115,33 +113,14 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 }
 
 // ============================================
-// MAINNET CONFIG - PoW - TRULY PERMISSIONLESS!
+// MAINNET CONFIG - FROZEN GENESIS (from raw chainspec)
 // ============================================
 
-/// Genesis allocation: 100% Mining (fair launch)
-/// No pre-allocations. All coins from block rewards.
-///
-/// HOW TO MINE:
-/// 1. Run: ./lumenyx-node --chain mainnet --mine
-/// 2. That's it! You're mining LUMENYX.
-fn mainnet_genesis() -> serde_json::Value {
-    // 100% Fair Launch - Zero pre-allocation
-    // All LUMENYX distributed through mining rewards only
-
-    serde_json::json!({
-        "balances": {
-            "balances": Vec::<(AccountId, u128)>::new(),
-        },
-        "difficulty": {
-            "initialDifficulty": 2
-        },
-        "evm": {
-            "accounts": {}
-        },
-    })
-}
-
 /// REAL Mainnet configuration - PoW LongestChain
+/// 
+/// IMPORTANT: This loads a FROZEN raw chainspec to ensure
+/// the genesis hash remains 0xd3b7...7676 regardless of
+/// how the runtime is compiled.
 ///
 /// LUMENYX - Decentralized Blockchain
 /// - 21M supply (like Bitcoin)
@@ -153,17 +132,9 @@ fn mainnet_genesis() -> serde_json::Value {
 /// Anyone can mine by running:
 /// ./lumenyx-node --chain mainnet --mine
 pub fn mainnet_config() -> Result<ChainSpec, String> {
-    Ok(ChainSpec::builder(
-        WASM_BINARY.ok_or_else(|| "WASM binary not available".to_string())?,
-        None,
-    )
-    .with_name("LUMENYX Mainnet")
-    .with_id("lumenyx_mainnet")
-    .with_chain_type(ChainType::Live)
-    .with_genesis_config_patch(mainnet_genesis())
-    .with_properties(chain_properties())
-    .with_boot_nodes(vec![])
-    .build())
+    // Load FROZEN raw chainspec - genesis hash will always be 0xd3b7...7676
+    let raw_spec = include_bytes!("chain-specs/lumenyx-mainnet-raw.json");
+    ChainSpec::from_json_bytes(raw_spec.as_slice()).map_err(|e| format!("Failed to load mainnet spec: {}", e))
 }
 
 /// Testnet config - for testing before mainnet
@@ -175,7 +146,7 @@ pub fn testnet_config() -> Result<ChainSpec, String> {
     .with_name("LUMENYX Testnet")
     .with_id("lumenyx_testnet")
     .with_chain_type(ChainType::Live)
-    .with_genesis_config_patch(mainnet_genesis())
+    .with_genesis_config_patch(development_genesis(vec![]))
     .with_properties(chain_properties())
     .with_boot_nodes(vec![])
     .build())
