@@ -218,3 +218,186 @@ No company. No foundation. No website. No social media.
 
 Just code.
 
+---
+
+---
+
+## Who This Is For
+
+LUMENYX is not for everyone.
+
+It's for whoever has an idea in their head that no one else will let them build.
+
+If you're looking for a "project" with a team, roadmap, community manager, and airdrop — close this page.
+
+If you're looking for a place where code is the only authority — keep reading.
+
+---
+
+### The Space Is Yours
+
+I know what you feel.
+
+That thing in your head that won't turn off. That idea that follows you everywhere — in the shower, while eating, at 4 AM when you should be sleeping but instead you're staring at a screen with burning eyes.
+
+You tried to explain it. You stopped. They don't understand anyway.
+
+They see someone wasting time. A weirdo. Someone who should get a real job, a normal life, stop chasing things that don't exist.
+
+They don't see what you see.
+
+The connections. The systems. The cracks in everything around us — and the ways to rebuild it from scratch, better, different.
+
+You know you could create something big. You feel it in your bones. But every time you try, someone says no. Rules. Limits. Permissions. People who never built anything in their lives explaining why it can't be done.
+
+So you keep it all inside. The idea stays there, burning.
+
+---
+
+### Listen
+
+While you were waiting for the right space, we were building it.
+
+Nights fixing bugs. Accusations of premine — and us publishing every line of code saying: "look, verify, we have nothing to hide." The chain freezes. We restart it. An error in genesis. We delete everything and start from zero.
+
+No team. No investors. No marketing.
+
+Just obsession.
+
+The result is here: a chain that works. Fixed scarcity like Bitcoin (21M). Real smart contracts via EVM. Zero premine. CPU mining — your computer, not billionaire server farms. Open code, verifiable, belonging to no one.
+
+The foundation is ready.
+
+What's missing is you.
+
+---
+
+### Technical Parameters For Builders
+
+| Parameter | Value |
+|-----------|-------|
+| **RPC** | `http://207.180.204.4:9944` |
+| **Chain ID** | `7777` |
+| **Consensus** | PoW with RX-LX algorithm (RandomX fork, CPU only) |
+| **Block time** | ~2.5 seconds |
+| **Token** | LUMENYX |
+| **Ticker (proposed)** | LNYX — chosen because it has no conflict with existing projects. But if there's ever a listing, the community decides. |
+| **EVM** | Full Solidity compatibility |
+
+With MetaMask (or any EVM wallet):
+
+1. Add a new network with the RPC above
+2. Use the same tools you use on Ethereum (Hardhat, Foundry, Remix, etc.)
+3. Deploy in minutes
+
+---
+
+### How To Get LUMENYX
+
+There is no faucet. There is no airdrop.
+
+You want LUMENYX? Two paths:
+
+1. **Mine.** Run the setup script, wait 10 minutes, you have your coins.
+2. **Buy from someone who mines.**
+
+There is no other way.
+
+---
+
+### What You Can Build Here
+
+We won't tell you what to build.
+We'll only tell you that LUMENYX is made for those who want to push beyond normal limits:
+
+- DEXs and DeFi protocols with no admin key
+- P2P escrow systems where no one can run away with the funds
+- On-chain gambling where the house is just code
+- Opt-in privacy tools built on top of a transparent layer
+- Censorship-resistant marketplaces
+- Anything that elsewhere would be "too risky", "too uncomfortable", or "too political"
+
+If elsewhere they tell you "no", here you can at least try.
+
+---
+
+### First Quest: Enter LUMENYX in 30 Minutes
+
+If you're a developer, this is the minimum path:
+
+**1. Get LUMENYX**
+
+Mine for 10 minutes. Or buy from a miner. No shortcuts.
+
+**2. Connect to the network**
+
+Add LUMENYX to your EVM wallet:
+- RPC: `http://207.180.204.4:9944`
+- Chain ID: `7777`
+
+Verify you see the network online (blocks advancing).
+
+**3. Deploy something real**
+
+Take a simple Solidity contract (ERC-20, ERC-721, or whatever you want).
+Deploy it on LUMENYX using your preferred tool.
+
+**4. Document**
+
+Open an issue or a Discussion in this repo with:
+- Contract address
+- Toolchain used (Hardhat, Foundry, etc.)
+- Problems encountered / fixes needed
+
+If you get this far, you're no longer a spectator. You've left a mark on-chain.
+
+---
+
+### If You're "The One"
+
+Maybe you're reading this and thinking: "it's not me."
+
+Fine.
+
+But maybe you know someone.
+
+That weird guy.
+The one you see online at impossible hours.
+The one who talks about things you don't understand but you feel there's something different about him.
+
+Send this to them.
+
+Send it where people who think different hang out: forums, boards, tech chats, forgotten corners of the net.
+
+Let it spread until it reaches the right person.
+
+---
+
+Satoshi was one person. He launched Bitcoin and the world was never the same.
+
+Vitalik was 19. He wrote a whitepaper and created an ecosystem.
+
+You don't need masses.
+You don't need armies.
+
+Just one.
+
+One crazy enough to see what others don't see.
+One obsessed enough to build what others call impossible.
+One who doesn't ask permission.
+
+Is that you?
+
+Then stop reading.
+
+**Build.**
+
+---
+
+**There is no Discord. There is no Telegram. There is no website.**
+
+**Only this repo and the chain that runs.**
+
+**If you think someone should see this, send it to them yourself.**
+
+**If you're the one, stop reading. Build.**
