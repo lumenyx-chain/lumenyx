@@ -2204,9 +2204,39 @@ except Exception as e:
 
 menu_receive() {
     echo ""
-    if ! ask_yes_no "Show address?"; then
+    if ! ask_yes_no "Show addresses?"; then
         return
     fi
+    print_dashboard
+    echo ""
+    echo -e "${VIOLET}═══ RECEIVE LUMENYX ═══${NC}"
+    echo ""
+
+    local addr
+    addr=$(get_address)
+    if [[ -n "$addr" ]]; then
+        echo -e "  ${PINK}SS58 Address (Substrate):${NC}"
+        echo -e "  ${GREEN}${BOLD}$addr${NC}"
+        echo ""
+    fi
+
+    local evm_addr
+    evm_addr=$(get_evm_address)
+    if [[ -n "$evm_addr" ]]; then
+        echo -e "  ${PINK}EVM Address (MetaMask):${NC}"
+        echo -e "  ${GREEN}${BOLD}$evm_addr${NC}"
+        echo ""
+    fi
+
+    if [[ -z "$addr" && -z "$evm_addr" ]]; then
+        print_error "No wallet found"
+    else
+        echo "  (Copy the address you need)"
+    fi
+
+    wait_enter
+}
+
 menu_history() {
     echo ""
     if ! ask_yes_no "Show history?"; then
