@@ -758,7 +758,8 @@ get_evm_balance() {
     ensure_helpers
     ensure_python_deps >/dev/null || { echo "offline"; return; }
 
-    local out
+    local out dec
+    dec=$(get_decimals)
     out=$(python3 -c "
 import json, sys
 try:
@@ -767,7 +768,7 @@ try:
     result = substrate.rpc_request('eth_getBalance', ['$evm_addr', 'latest'])
     bal_hex = result.get('result', '0x0')
     bal = int(bal_hex, 16)
-    human = bal / (10 ** 18)
+    human = bal / (10 ** $dec)
     print(json.dumps({'ok': True, 'balance': human}))
 except Exception as e:
     print(json.dumps({'ok': False, 'error': str(e)}))
@@ -783,6 +784,24 @@ except Exception as e:
     fi
 }
 
+# Fork height for decimal migration (12 → 18 decimals)
+FORK_HEIGHT=440000
+
+# Get current decimals based on best block number
+# Before block 440,000: 12 decimals (LUMENYX era)
+# After block 440,000: 18 decimals (LUMO era)
+get_decimals() {
+    local best
+    best=$(curl -s -m 2 -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
+        http://127.0.0.1:9944 2>/dev/null | python3 -c 'import sys,json; h=json.load(sys.stdin).get("result",{}).get("number","0x0"); print(int(h,16))' 2>/dev/null || echo "0")
+    if [[ "$best" -ge "$FORK_HEIGHT" ]]; then
+        echo "18"
+    else
+        echo "12"
+    fi
+}
+
 get_balance() {
     if ! node_running; then
         echo "offline"
@@ -793,7 +812,8 @@ get_balance() {
     ensure_python_deps >/dev/null || { echo "offline"; return; }
 
     local out ok free
-    out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode balance --decimals 18 2>/dev/null || true)
+    local dec=$(get_decimals)
+    out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode balance --decimals "$dec" 2>/dev/null || true)
     ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
 
     if [[ "$ok" == "true" ]]; then
@@ -2137,6 +2157,8 @@ menu_send() {
         # Detect if recipient is EVM (0x...) or SS58
         if [[ "$recipient" == 0x* ]]; then
             print_info "EVM address detected — using evm_bridge.deposit..."
+            local dec_now
+            dec_now=$(get_decimals)
             local out ok hash err
             out=$(python3 -c "
 import json, sys, os
@@ -2148,14 +2170,15 @@ from substrateinterface import SubstrateInterface, Keypair, KeypairType
 substrate = SubstrateInterface(url='$WS')
 kp = Keypair.create_from_seed(bytes.fromhex(seed), crypto_type=KeypairType.SR25519)
 
+dec = $dec_now
 amount_str = '$amount'
 s = amount_str.strip().replace(',', '.')
 if '.' in s:
     a, b = s.split('.', 1)
-    b = (b + '0' * 18)[:18]
-    value = int(a) * (10 ** 18) + int(b)
+    b = (b + '0' * dec)[:dec]
+    value = int(a) * (10 ** dec) + int(b)
 else:
-    value = int(s) * (10 ** 18)
+    value = int(s) * (10 ** dec)
 
 call = substrate.compose_call(
     call_module='EvmBridge',
@@ -2184,7 +2207,7 @@ except Exception as e:
         else
             print_info "Signing & submitting extrinsic..."
             local out ok hash err
-            out=$(python3 "$SUBSTRATE_SEND_PY" --ws "$WS" --to "$recipient" --amount "$amount" --decimals 18 --wait inclusion 2>/dev/null || true)
+            out=$(python3 "$SUBSTRATE_SEND_PY" --ws "$WS" --to "$recipient" --amount "$amount" --decimals "$(get_decimals)" --wait inclusion 2>/dev/null || true)
             ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
             hash=$(echo "$out" | grep -o '"hash": *"[^"]*"' | cut -d'"' -f4)
             err=$(echo "$out" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)
@@ -2281,7 +2304,7 @@ menu_tx_history() {
     print_info "Scanning recent blocks for transactions..."
 
     local out
-    out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 0 --decimals 18 2>&1 || true)
+    out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 0 --decimals "$(get_decimals)" 2>&1 || true)
 
     if echo "$out" | grep -q '"ok": true'; then
         echo "$out" | python3 -c 'import sys,json
