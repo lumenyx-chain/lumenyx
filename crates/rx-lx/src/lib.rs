@@ -120,6 +120,9 @@ pub struct Dataset {
 }
 
 unsafe impl Send for Dataset {}
+// Safety: RandomX Dataset is read-only after init() completes.
+// Multiple threads can safely read from it concurrently via Vm::fast.
+unsafe impl Sync for Dataset {}
 
 impl Dataset {
     /// Allocate a new dataset

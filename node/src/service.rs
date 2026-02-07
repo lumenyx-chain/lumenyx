@@ -400,6 +400,14 @@ impl MinerState {
                 .collect::<Vec<_>>(),
         );
 
+        // v2.3.0: Shared Dataset for fast mining mode (~2GB total, not per-thread)
+        // Allocated once and shared across all mining threads via Arc
+        let shared_dataset: Arc<std::sync::Mutex<Option<rx_lx::Dataset>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let shared_dataset_ready: Arc<std::sync::atomic::AtomicBool> =
+            Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let shared_seed_height: Arc<AtomicU64> = Arc::new(AtomicU64::new(u64::MAX));
+
         for thread_id in 0..num_threads {
             let mut job_rx = job_rx.clone();
             let found_tx = found_tx.clone();
@@ -407,6 +415,9 @@ impl MinerState {
 
             let total_hashes = total_hashes.clone();
             let per_thread_hashes = per_thread_hashes.clone();
+            let shared_dataset = shared_dataset.clone();
+            let shared_dataset_ready = shared_dataset_ready.clone();
+            let shared_seed_height = shared_seed_height.clone();
 
             std::thread::Builder::new()
                 .name(format!("pow-worker-{}", thread_id))
@@ -445,16 +456,73 @@ impl MinerState {
                             let seed_bytes: [u8; 32] = job.seed.into();
                             cache.init(&seed_bytes);
 
-                            // Use light mode VM (shared-memory friendly, no 2GB per thread)
-                            match rx_lx::Vm::light(flags, &cache) {
-                                Ok(vm) => {
-                                    vm_opt = Some(vm);
-                                    log::info!("Worker {}: Light mode VM ready (seed_height={})", thread_id, job.seed_height);
+                            // Thread 0 builds the shared Dataset, others wait
+                            if thread_id == 0 {
+                                log::info!("Worker 0: Building shared dataset (fast mode, ~2GB)...");
+                                shared_dataset_ready.store(false, std::sync::atomic::Ordering::SeqCst);
+
+                                match rx_lx::Dataset::alloc(flags) {
+                                    Ok(mut ds) => {
+                                        ds.init(&cache);
+                                        // Create VM from dataset pointer BEFORE moving ds into Arc
+                                        let vm_result = rx_lx::Vm::fast(flags, &ds);
+                                        {
+                                            let mut lock = shared_dataset.lock().unwrap();
+                                            *lock = Some(ds);
+                                        }
+                                        shared_seed_height.store(job.seed_height, Ordering::SeqCst);
+                                        shared_dataset_ready.store(true, std::sync::atomic::Ordering::SeqCst);
+
+                                        match vm_result {
+                                            Ok(vm) => {
+                                                vm_opt = Some(vm);
+                                                log::info!("Worker 0: Fast mode VM ready (shared dataset)");
+                                            }
+                                            Err(e) => {
+                                                log::error!("Worker 0: Fast VM failed: {:?}", e);
+                                                // Fallback to light
+                                                if let Ok(vm) = rx_lx::Vm::light(flags, &cache) {
+                                                    vm_opt = Some(vm);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Worker 0: Dataset alloc failed ({:?}), all threads use light mode", e);
+                                        shared_dataset_ready.store(true, std::sync::atomic::Ordering::SeqCst);
+                                        if let Ok(vm) = rx_lx::Vm::light(flags, &cache) {
+                                            vm_opt = Some(vm);
+                                        }
+                                    }
                                 }
-                                Err(e) => {
-                                    log::error!("Worker {}: VM creation failed: {:?}", thread_id, e);
-                                    vm_opt = None;
-                                    continue;
+                            } else {
+                                // Wait for thread 0 to build the dataset
+                                while !shared_dataset_ready.load(std::sync::atomic::Ordering::SeqCst) {
+                                    std::thread::sleep(std::time::Duration::from_millis(100));
+                                }
+
+                                // Try to create fast VM from shared dataset
+                                let lock = shared_dataset.lock().unwrap();
+                                if let Some(ref ds) = *lock {
+                                    match rx_lx::Vm::fast(flags, ds) {
+                                        Ok(vm) => {
+                                            vm_opt = Some(vm);
+                                            log::info!("Worker {}: Fast mode VM ready (shared dataset)", thread_id);
+                                        }
+                                        Err(e) => {
+                                            log::warn!("Worker {}: Fast VM failed ({:?}), using light mode", thread_id, e);
+                                            drop(lock);
+                                            if let Ok(vm) = rx_lx::Vm::light(flags, &cache) {
+                                                vm_opt = Some(vm);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Dataset alloc failed on thread 0, use light mode
+                                    drop(lock);
+                                    if let Ok(vm) = rx_lx::Vm::light(flags, &cache) {
+                                        vm_opt = Some(vm);
+                                    }
                                 }
                             }
                             last_seed_height = job.seed_height;
