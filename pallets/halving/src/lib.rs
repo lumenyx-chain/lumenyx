@@ -28,9 +28,6 @@ pub mod pallet {
     pub type BalanceOf<T> =
         <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
-    type Nonce = u32;
-    type Balance = u128;
-
     /// Pool payout digest for P2Pool PPLNS
     #[derive(Clone, codec::Encode, codec::Decode, scale_info::TypeInfo)]
     pub struct PoolPayoutDigest {
@@ -149,19 +146,55 @@ pub mod pallet {
 
             let factor: u128 = DECIMAL_MIGRATION_FACTOR;
 
-            // 1. Migrate all System::Account balances
-            // Uses frame_system::Account::translate to iterate all accounts
+            // 1. Migrate all System::Account balances via raw storage
+            // Storage prefix: twox_128("System") ++ twox_128("Account")
+            let prefix = frame_support::storage::storage_prefix(b"System", b"Account");
             let mut count: u64 = 0;
-            frame_system::Account::<T>::translate::<
-                frame_system::AccountInfo<Nonce, pallet_balances::AccountData<Balance>>,
-                _,
-            >(|_key, mut info| {
-                info.data.free = info.data.free.saturating_mul(factor);
-                info.data.reserved = info.data.reserved.saturating_mul(factor);
-                info.data.frozen = info.data.frozen.saturating_mul(factor);
-                count += 1;
-                Some(info)
-            });
+
+            let mut next = frame_support::storage::unhashed::get_raw(&prefix)
+                .map(|_| prefix.to_vec())
+                .or_else(|| {
+                    sp_io::storage::next_key(&prefix)
+                        .filter(|k| k.starts_with(&prefix))
+                });
+
+            // Iterate all keys under System::Account
+            // Each value is AccountInfo { nonce: u32, consumers: u32, providers: u32, sufficients: u32, data: AccountData { free: u128, reserved: u128, frozen: u128 } }
+            // We need to decode, multiply balance fields, re-encode
+            let mut key = sp_io::storage::next_key(&prefix);
+            while let Some(k) = key {
+                if !k.starts_with(&prefix) {
+                    break;
+                }
+                if let Some(raw) = sp_io::storage::get(&k) {
+                    // AccountInfo layout: nonce(4) + consumers(4) + providers(4) + sufficients(4) + free(16) + reserved(16) + frozen(16)
+                    // Total: 64 bytes with compact encoding, but actually SCALE encoded
+                    // Use codec::Decode
+                    #[derive(codec::Encode, codec::Decode)]
+                    struct AccountInfo {
+                        nonce: u32,
+                        consumers: u32,
+                        providers: u32,
+                        sufficients: u32,
+                        data: AccountData,
+                    }
+                    #[derive(codec::Encode, codec::Decode)]
+                    struct AccountData {
+                        free: u128,
+                        reserved: u128,
+                        frozen: u128,
+                    }
+
+                    if let Ok(mut info) = AccountInfo::decode(&mut &raw[..]) {
+                        info.data.free = info.data.free.saturating_mul(factor);
+                        info.data.reserved = info.data.reserved.saturating_mul(factor);
+                        info.data.frozen = info.data.frozen.saturating_mul(factor);
+                        sp_io::storage::set(&k, &info.encode());
+                        count += 1;
+                    }
+                }
+                key = sp_io::storage::next_key(&k);
+            }
             log::info!("🔄 Migrated {} accounts", count);
 
             // 2. Migrate TotalIssuance via raw storage

@@ -12,7 +12,7 @@ frame-system = { git = "https://github.com/paritytech/polkadot-sdk", branch = "s
 sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-core = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-std = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
-pallet-balances = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
+sp-io = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 lumenyx-primitives = { path = "../../primitives", default-features = false }
 
 [features]
@@ -26,6 +26,6 @@ std = [
     "sp-runtime/std",
     "sp-core/std",
     "sp-std/std",
-    "pallet-balances/std",
+    "sp-io/std",
     "lumenyx-primitives/std",
 ]
