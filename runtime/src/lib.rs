@@ -1,10 +1,15 @@
-//! LUMENYX Runtime
+//! LUMO Runtime
 //!
 //! Decentralized blockchain:
 //! - Fixed supply (21M)
 //! - 2.5 second blocks (PoW LongestChain)
 //! - Smart contracts (EVM compatible)
 //! - True decentralization (fair launch, no governance)
+//!
+//! Hard fork v2.3.0 at block 440,000:
+//!   - Decimals 12 → 18, balances ×10^6
+//!   - Miner full mode (5-7x faster)
+//!   - Ticker LUMENYX → LUMO
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![recursion_limit = "256"]
@@ -43,7 +48,7 @@ use pallet_transaction_payment::FungibleAdapter;
 // MINER ADDRESS DIGEST FOR PoW
 // ============================================
 
-/// Engine ID for LUMENYX PoW consensus
+/// Engine ID for LUMO PoW consensus
 pub const LUMENYX_ENGINE_ID: sp_runtime::ConsensusEngineId = *b"LMNX";
 
 /// Digest to identify block miner for reward distribution
@@ -72,7 +77,7 @@ use pallet_evm::{
 };
 
 // Import our primitives
-pub use lumenyx_primitives::{BLOCKS_PER_DAY, BLOCKS_PER_YEAR, BLOCK_TIME_MS};
+pub use lumenyx_primitives::{BLOCKS_PER_DAY, BLOCKS_PER_YEAR, BLOCK_TIME_MS, FORK_HEIGHT_V2, DECIMAL_MIGRATION_FACTOR};
 use pallet_evm_bridge;
 
 pub type BlockNumber = u32;
@@ -87,9 +92,12 @@ pub const MILLISECS_PER_BLOCK: u64 = 2500;
 pub const SLOT_DURATION: u64 = MILLISECS_PER_BLOCK;
 
 /// Minimum balance to keep account alive
-pub const EXISTENTIAL_DEPOSIT: Balance = 500;
+/// Post-fork (18 decimals): 500 * 10^6 = 500_000_000
+/// Pre-fork (12 decimals): 500
+/// NOTE: This is set to post-fork value. Pre-fork blocks already passed genesis.
+pub const EXISTENTIAL_DEPOSIT: Balance = 500_000_000;
 
-/// EVM Chain ID - unique identifier for LUMENYX
+/// EVM Chain ID - unique identifier for LUMO
 pub const EVM_CHAIN_ID: u64 = 7777;
 
 #[sp_version::runtime_version]
@@ -97,10 +105,10 @@ pub const RUNTIME_VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: sp_runtime::create_runtime_str!("lumenyx"),
     impl_name: sp_runtime::create_runtime_str!("lumenyx-node"),
     authoring_version: 1,
-    spec_version: 306,
+    spec_version: 310,
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
-    transaction_version: 2,
+    transaction_version: 3,
     state_version: 1,
 };
 
@@ -185,7 +193,8 @@ impl pallet_balances::Config for Runtime {
 }
 
 parameter_types! {
-    pub const TransactionByteFee: Balance = 1_000_000;
+    /// Post-fork: 1_000_000 * 10^6 = 1_000_000_000_000
+    pub const TransactionByteFee: Balance = 1_000_000_000_000;
     pub FeeMultiplier: sp_runtime::FixedU128 = sp_runtime::FixedU128::from_u32(1);
 }
 
@@ -246,12 +255,97 @@ impl pallet_authorship::Config for Runtime {
 }
 
 // ============================================
-// LUMENYX CUSTOM PALLETS
+// LUMO CUSTOM PALLETS
 // ============================================
 
 impl pallet_halving::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type Currency = Balances;
+}
+
+// ============================================
+// BALANCE MIGRATION: 12 → 18 DECIMALS
+// ============================================
+// At FORK_HEIGHT_V2 (block 440,000), all Substrate balances
+// are multiplied by DECIMAL_MIGRATION_FACTOR (10^6).
+// This is a one-shot migration triggered on_initialize.
+
+/// Storage flag to ensure migration runs exactly once
+pub struct DecimalMigrationDone;
+impl frame_support::traits::StorageInstance for DecimalMigrationDone {
+    fn pallet_prefix() -> &'static str { "DecimalMigration" }
+    const STORAGE_PREFIX: &'static str = "Done";
+}
+pub type DecimalMigrationDoneStorage = frame_support::storage::types::StorageValue<
+    DecimalMigrationDone,
+    bool,
+    frame_support::traits::ValueQuery,
+>;
+
+/// Hook that runs the balance migration at the fork block
+pub struct DecimalMigrationHook;
+impl<T: frame_system::Config> frame_support::traits::OnInitialize<frame_system::pallet_prelude::BlockNumberFor<T>> for DecimalMigrationHook
+where
+    T: pallet_balances::Config<Balance = u128>,
+{
+    fn on_initialize(n: frame_system::pallet_prelude::BlockNumberFor<T>) -> Weight {
+        let block_u32: u32 = n.try_into().unwrap_or(0);
+
+        if block_u32 != FORK_HEIGHT_V2 {
+            return Weight::zero();
+        }
+
+        if DecimalMigrationDoneStorage::get() {
+            return Weight::zero();
+        }
+
+        log::info!("🔄 FORK v2.3.0: Starting balance migration at block {}", block_u32);
+        log::info!("🔄 Multiplying all balances by {} (12→18 decimals)", DECIMAL_MIGRATION_FACTOR);
+
+        let mut count: u64 = 0;
+
+        // Migrate all Substrate accounts
+        // We iterate over System::Account which holds AccountData<Balance>
+        frame_system::Account::<Runtime>::translate::<
+            frame_system::AccountInfo<Nonce, pallet_balances::AccountData<Balance>>,
+            _,
+        >(|_key, mut info| {
+            info.data.free = info.data.free.saturating_mul(DECIMAL_MIGRATION_FACTOR);
+            info.data.reserved = info.data.reserved.saturating_mul(DECIMAL_MIGRATION_FACTOR);
+            info.data.frozen = info.data.frozen.saturating_mul(DECIMAL_MIGRATION_FACTOR);
+            count += 1;
+            Some(info)
+        });
+
+        // Migrate TotalIssuance
+        let old_issuance = pallet_balances::TotalIssuance::<Runtime>::get();
+        let new_issuance = old_issuance.saturating_mul(DECIMAL_MIGRATION_FACTOR);
+        pallet_balances::TotalIssuance::<Runtime>::put(new_issuance);
+
+        // Migrate EVM account balances
+        // EVM stores balances in its own AccountCodes/AccountStorages but the actual
+        // balance is managed by pallet_balances via the AddressMapping, so the
+        // System::Account migration above covers mapped EVM accounts too.
+
+        // Migrate halving TotalEmitted
+        pallet_halving::TotalEmitted::<Runtime>::mutate(|total| {
+            *total = total.saturating_mul(DECIMAL_MIGRATION_FACTOR.try_into().unwrap_or_default());
+        });
+
+        // Also migrate the base fee in pallet_base_fee storage
+        pallet_base_fee::BaseFeePerGas::<Runtime>::mutate(|base| {
+            *base = *base * U256::from(DECIMAL_MIGRATION_FACTOR);
+        });
+
+        DecimalMigrationDoneStorage::put(true);
+
+        log::info!("✅ FORK v2.3.0: Migration complete! {} accounts migrated", count);
+        log::info!("✅ TotalIssuance: {} → {}", old_issuance, new_issuance);
+        log::info!("✅ Decimals: 12 → 18 | Ticker: LUMENYX → LUMO");
+
+        // Conservative weight estimate
+        Weight::from_parts(count * 100_000, count * 1000)
+    }
 }
 
 // ============================================
@@ -443,9 +537,9 @@ impl pallet_ethereum::Config for Runtime {
 }
 
 parameter_types! {
-    // 1000 planck/gas = "1 gwei equivalent" for 12 decimals
+    // Post-fork: 1000 * 10^6 = 1_000_000_000 planck/gas
     // This is the starting base fee, will adjust dynamically via EIP-1559
-    pub DefaultBaseFeePerGas: U256 = U256::from(1_000u64);
+    pub DefaultBaseFeePerGas: U256 = U256::from(1_000_000_000u64);
     pub DefaultElasticity: Permill = Permill::from_parts(125_000);
 }
 

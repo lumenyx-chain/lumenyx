@@ -1,22 +1,25 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v2.2.3 - Auto Binary Update Fix
+# LUMO SETUP SCRIPT v2.3.0 - Hard Fork: 18 Decimals + Fast Mining + Rebrand
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
-VERSION="2.2.5"
-SCRIPT_VERSION="2.2.5"
+VERSION="2.3.0"
+SCRIPT_VERSION="2.3.0"
 
-# Colors
+# Colors - LUMO brand palette
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
+CYAN='\033[38;5;51m'        # Bright Cyan #00F0FF
 BLUE='\033[0;34m'
 BOLD='\033[1m'
 NC='\033[0m'
+VIOLET='\033[38;5;129m'     # Viola #6A0DAD
+PINK='\033[38;5;200m'       # Pink #FF00E5
+BRIGHT_VIOLET='\033[38;5;165m' # #A100FF
 
 # Configuration
 LUMENYX_DIR="$HOME/.lumenyx"
@@ -195,18 +198,18 @@ check_binary_update() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 print_logo() {
-    echo -e "${BLUE}"
+    echo -e "${VIOLET}"
     echo "╔════════════════════════════════════════════════════════════════════╗"
     echo "║                                                                    ║"
-    echo "║   ██╗     ██╗   ██╗███╗   ███╗███████╗███╗   ██╗██╗   ██╗██╗  ██╗  ║"
-    echo "║   ██║     ██║   ██║████╗ ████║██╔════╝████╗  ██║╚██╗ ██╔╝╚██╗██╔╝  ║"
-    echo "║   ██║     ██║   ██║██╔████╔██║█████╗  ██╔██╗ ██║ ╚████╔╝  ╚███╔╝   ║"
-    echo "║   ██║     ██║   ██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║  ╚██╔╝   ██╔██╗   ║"
-    echo "║   ███████╗╚██████╔╝██║ ╚═╝ ██║███████╗██║ ╚████║   ██║   ██╔╝ ██╗  ║"
-    echo "║   ╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝  ║"
+    echo -e "║   ${BRIGHT_VIOLET}██╗     ██╗   ██╗███╗   ███╗ ██████╗ ${VIOLET}                              ║"
+    echo -e "║   ${BRIGHT_VIOLET}██║     ██║   ██║████╗ ████║██╔═══██╗${VIOLET}                              ║"
+    echo -e "║   ${PINK}██║     ██║   ██║██╔████╔██║██║   ██║${VIOLET}                              ║"
+    echo -e "║   ${PINK}██║     ██║   ██║██║╚██╔╝██║██║   ██║${VIOLET}                              ║"
+    echo -e "║   ${CYAN}███████╗╚██████╔╝██║ ╚═╝ ██║╚██████╔╝${VIOLET}                              ║"
+    echo -e "║   ${CYAN}╚══════╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ${VIOLET}                              ║"
     echo "║                                                                    ║"
-    echo "╚════════════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
+    echo -e "╚════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
 }
 
 print_ok() { echo -e "${GREEN}✓${NC} $1"; }
@@ -693,6 +696,93 @@ get_address() {
     fi
 }
 
+get_evm_address() {
+    # Derive EVM (H160) address from the SS58 account
+    # The EVM address is the first 20 bytes of the blake2 hash of the SS58 public key
+    if [[ -f "$LUMENYX_DIR/wallet_evm.txt" ]]; then
+        cat "$LUMENYX_DIR/wallet_evm.txt" 2>/dev/null
+        return
+    fi
+
+    if [[ -f "$DATA_DIR/miner-key" ]]; then
+        local seed evm_addr
+        seed=$(cat "$DATA_DIR/miner-key" 2>/dev/null)
+        if [[ -n "$seed" ]] && [[ -f "$LUMENYX_DIR/$BINARY_NAME" ]]; then
+            # Get public key hex from the key inspect
+            local pub_hex
+            pub_hex=$("$LUMENYX_DIR/$BINARY_NAME" key inspect "0x$seed" 2>/dev/null | grep "Public key (hex):" | awk '{print $4}')
+            if [[ -n "$pub_hex" ]]; then
+                # EVM mapped address: first 20 bytes of blake2_256(pub_key)
+                # We can get this from the node RPC or compute it
+                # For now, try to get it via python if available
+                if command -v python3 >/dev/null 2>&1; then
+                    evm_addr=$(python3 -c "
+import hashlib
+try:
+    from substrateinterface.utils.hasher import blake2_256
+    pub = bytes.fromhex('${pub_hex}'.replace('0x',''))
+    h = blake2_256(b'evm:' + pub)
+    print('0x' + h[:20].hex())
+except:
+    # Fallback: use hashlib
+    import struct
+    pub = bytes.fromhex('${pub_hex}'.replace('0x',''))
+    h = hashlib.blake2b(b'evm:' + pub, digest_size=32).digest()
+    print('0x' + h[:20].hex())
+" 2>/dev/null || true)
+                    if [[ -n "$evm_addr" && "$evm_addr" != "0x" ]]; then
+                        echo "$evm_addr" > "$LUMENYX_DIR/wallet_evm.txt"
+                        echo "$evm_addr"
+                        return
+                    fi
+                fi
+            fi
+        fi
+    fi
+    echo ""
+}
+
+get_evm_balance() {
+    if ! node_running; then
+        echo "offline"
+        return
+    fi
+
+    local evm_addr
+    evm_addr=$(get_evm_address)
+    if [[ -z "$evm_addr" ]]; then
+        echo "0.000"
+        return
+    fi
+
+    ensure_helpers
+    ensure_python_deps >/dev/null || { echo "offline"; return; }
+
+    local out
+    out=$(python3 -c "
+import json, sys
+try:
+    from substrateinterface import SubstrateInterface
+    substrate = SubstrateInterface(url='$WS')
+    result = substrate.rpc_request('eth_getBalance', ['$evm_addr', 'latest'])
+    bal_hex = result.get('result', '0x0')
+    bal = int(bal_hex, 16)
+    human = bal / (10 ** 18)
+    print(json.dumps({'ok': True, 'balance': human}))
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': str(e)}))
+" 2>/dev/null || true)
+
+    local ok bal
+    ok=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("ok",False))' 2>/dev/null || echo "False")
+    if [[ "$ok" == "True" ]]; then
+        bal=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("{:.3f}".format(d.get("balance",0)))' 2>/dev/null || echo "0.000")
+        echo "$bal"
+    else
+        echo "0.000"
+    fi
+}
+
 get_balance() {
     if ! node_running; then
         echo "offline"
@@ -703,7 +793,7 @@ get_balance() {
     ensure_python_deps >/dev/null || { echo "offline"; return; }
 
     local out ok free
-    out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode balance --decimals 12 2>/dev/null || true)
+    out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode balance --decimals 18 2>/dev/null || true)
     ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
 
     if [[ "$ok" == "true" ]]; then
@@ -764,7 +854,7 @@ get_bootnodes() {
     echo -e "${CYAN}═══ BOOTNODE SETUP ═══${NC}" >&2
     echo "" >&2
     echo "  To connect to the network, you need a bootnode address." >&2
-    echo "  Get it from someone already running LUMENYX." >&2
+    echo "  Get it from someone already running LUMO." >&2
     echo "" >&2
     echo "  Format: /ip4/IP/tcp/30333/p2p/PEER_ID" >&2
     echo "" >&2
@@ -789,7 +879,7 @@ prompt_clean_install() {
     echo -e "${YELLOW}║                  EXISTING DATA DETECTED                            ║${NC}"
     echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  Found existing LUMENYX on this machine:"
+    echo "  Found existing LUMO on this machine:"
     echo ""
     [[ -d "$LUMENYX_DIR" ]] && echo -e "    ${CYAN}•${NC} $LUMENYX_DIR (binary, config, logs)"
     [[ -d "$DATA_DIR" ]] && echo -e "    ${CYAN}•${NC} $DATA_DIR (blockchain data, wallet)"
@@ -852,15 +942,15 @@ is_first_run() {
 step_welcome() {
     clear
     print_logo
-    echo -e "${BOLD}                    Welcome to LUMENYX${NC}"
+    echo -e "${BOLD}                    Welcome to LUMO${NC}"
     echo ""
     echo -e "  ${CYAN}\"Bitcoin started with a headline. Ethereum started with a premine.${NC}"
-    echo -e "  ${CYAN} LUMENYX starts with you.\"${NC}"
+    echo -e "  ${CYAN} LUMO starts with you.\"${NC}"
     echo ""
     echo "  This script will:"
     echo ""
     echo -e "    ${GREEN}1.${NC} Check your system"
-    echo -e "    ${GREEN}2.${NC} Download LUMENYX node"
+    echo -e "    ${GREEN}2.${NC} Download LUMO node"
     echo -e "    ${GREEN}3.${NC} Create your wallet"
     echo -e "    ${GREEN}4.${NC} Start mining"
     echo ""
@@ -1232,7 +1322,7 @@ pool_is_enabled() {
 pool_enable() {
     mkdir -p "$LUMENYX_DIR"
     cat > "$POOL_CONF" <<EOF
-# LUMENYX Pool Configuration
+# LUMO Pool Configuration
 POOL_MODE=1
 EOF
     print_ok "Pool mode ENABLED"
@@ -1423,7 +1513,7 @@ create_systemd_service() {
     # - use ExecStartPre guards
     cat > /tmp/lumenyx.service <<EOF
 [Unit]
-Description=LUMENYX Node (24/7 Mining)
+Description=LUMO Node (24/7 Mining)
 After=network-online.target
 Wants=network-online.target
 
@@ -1577,7 +1667,7 @@ WATCHDOG_EOF
 create_watchdog_service() {
     cat > /tmp/lumenyx-watchdog.service <<EOF
 [Unit]
-Description=LUMENYX Watchdog
+Description=LUMO Watchdog
 After=lumenyx.service
 Wants=lumenyx.service
 
@@ -1593,7 +1683,7 @@ EOF
 create_watchdog_timer() {
     cat > /tmp/lumenyx-watchdog.timer <<EOF
 [Unit]
-Description=Run LUMENYX watchdog periodically
+Description=Run LUMO watchdog periodically
 
 [Timer]
 OnBootSec=60s
@@ -1632,8 +1722,8 @@ create_autostart_desktop() {
     cat > "$AUTOSTART_FILE" <<EOF
 [Desktop Entry]
 Type=Application
-Name=LUMENYX Wallet
-Comment=LUMENYX Mining Dashboard
+Name=LUMO Wallet
+Comment=LUMO Mining Dashboard
 Exec=gnome-terminal -- bash -c '$script_path; exec bash'
 Terminal=false
 Hidden=false
@@ -1830,10 +1920,26 @@ print_dashboard() {
         short_addr="Not set"
     fi
 
-    local balance block_info peers
+    # EVM address
+    local evm_addr short_evm
+    evm_addr=$(get_evm_address)
+    if [[ -n "$evm_addr" ]]; then
+        short_evm="${evm_addr:0:8}...${evm_addr: -4}"
+    else
+        short_evm="N/A"
+    fi
+
+    local balance evm_balance block_info peers
     balance=$(get_balance)
+    evm_balance=$(get_evm_balance)
     block_info=$(get_block)
     peers=$(get_peers)
+
+    # Calculate total
+    local total="N/A"
+    if [[ "$balance" != "offline" && "$evm_balance" != "offline" ]]; then
+        total=$(python3 -c "print('{:.3f}'.format($balance + $evm_balance))" 2>/dev/null || echo "N/A")
+    fi
 
     # Parse block info: best|target|syncing
     local block target syncing block_display
@@ -1883,12 +1989,14 @@ print_dashboard() {
 
     clear
     print_logo
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}   [S] $solo_indicator      [P] $pool_indicator      [D] $daemon_indicator               ${CYAN}║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${VIOLET}╔════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${VIOLET}║${NC}   [S] $solo_indicator      [P] $pool_indicator      [D] $daemon_indicator               ${VIOLET}║${NC}"
+    echo -e "${VIOLET}╚════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "  Wallet:   ${GREEN}$short_addr${NC}"
-    echo -e "  Balance:  ${GREEN}$balance LUMENYX${NC}"
+    echo -e "  ${PINK}SS58:${NC}     ${GREEN}$short_addr${NC}    ${CYAN}$balance LUMO${NC}"
+    echo -e "  ${PINK}EVM:${NC}      ${GREEN}$short_evm${NC}      ${CYAN}$evm_balance LUMO${NC}"
+    echo -e "  ${PINK}Total:${NC}                         ${BRIGHT_VIOLET}${BOLD}$total LUMO${NC}"
+    echo ""
     echo -e "  Block:    $block_display"
     echo -e "  Status:   ${status_color} ${status}${NC}"
     echo -e "  Peers:    $peers"
@@ -1901,24 +2009,24 @@ print_dashboard() {
     fi
     echo -e "  Threads:  ${CYAN}$threads_display${NC}"
     echo ""
-    echo "════════════════════════════════════════════════════════════════════"
+    echo -e "${VIOLET}════════════════════════════════════════════════════════════════════${NC}"
 }
 
 dashboard_loop() {
     while true; do
         print_dashboard
         echo ""
-        echo "  [1] ⛏️  Start/Stop Mining"
-        echo "  [2] 💸 Send LUMENYX"
-        echo "  [3] 📥 Receive (show address)"
-        echo "  [4] 📜 History"
-        echo "  [5] 📊 Live Logs"
-        echo "  [6] 💰 Transaction History"
-        echo "  [7] 🛠️  Useful Commands"
-        echo "  [8] ⚙️  Set Mining Threads"
-        echo "  [0] 🚪 Exit"
+        echo -e "  ${VIOLET}[1]${NC} ⛏️  Start/Stop Mining"
+        echo -e "  ${VIOLET}[2]${NC} 💸 Send LUMO"
+        echo -e "  ${VIOLET}[3]${NC} 📥 Receive (show addresses)"
+        echo -e "  ${VIOLET}[4]${NC} 📜 History"
+        echo -e "  ${VIOLET}[5]${NC} 📊 Live Logs"
+        echo -e "  ${VIOLET}[6]${NC} 💰 Transaction History"
+        echo -e "  ${VIOLET}[7]${NC} 🛠️  Useful Commands"
+        echo -e "  ${VIOLET}[8]${NC} ⚙️  Set Mining Threads"
+        echo -e "  ${VIOLET}[0]${NC} 🚪 Exit"
         echo ""
-        echo -e "  ${YELLOW}[S] SOLO  [P] POOL  [D] 24/7 Daemon${NC}"
+        echo -e "  ${PINK}[S] SOLO  [P] POOL  [D] 24/7 Daemon${NC}"
         echo -e "  ${CYAN}Auto-refresh in 10s - Press a key to select${NC}"
         echo ""
 
@@ -1988,7 +2096,7 @@ menu_send() {
     fi
     print_dashboard
     echo ""
-    echo -e "${CYAN}═══ SEND LUMENYX (Balances.transfer_keep_alive) ═══${NC}"
+    echo -e "${VIOLET}═══ SEND LUMO ═══${NC}"
     echo ""
 
     if ! node_running; then
@@ -2006,14 +2114,14 @@ menu_send() {
     ensure_helpers
     ensure_python_deps || { wait_enter; return; }
 
-    read -r -p "Recipient address (SS58): " recipient
+    read -r -p "Recipient address (SS58 or 0x EVM): " recipient
     if [[ -z "$recipient" ]]; then
         print_warning "Cancelled"
         wait_enter
         return
     fi
 
-    read -r -p "Amount (LUMENYX): " amount
+    read -r -p "Amount (LUMO): " amount
     if [[ -z "$amount" ]]; then
         print_warning "Cancelled"
         wait_enter
@@ -2022,23 +2130,72 @@ menu_send() {
 
     echo ""
     echo "  To:     $recipient"
-    echo "  Amount: $amount LUMENYX"
+    echo "  Amount: $amount LUMO"
     echo ""
 
     if ask_yes_no "Confirm transaction?"; then
-        print_info "Signing & submitting extrinsic..."
-        local out ok hash err
-        out=$(python3 "$SUBSTRATE_SEND_PY" --ws "$WS" --to "$recipient" --amount "$amount" --decimals 12 --wait inclusion 2>/dev/null || true)
-        ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
-        hash=$(echo "$out" | grep -o '"hash": *"[^"]*"' | cut -d'"' -f4)
-        err=$(echo "$out" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)
+        # Detect if recipient is EVM (0x...) or SS58
+        if [[ "$recipient" == 0x* ]]; then
+            print_info "EVM address detected — using evm_bridge.deposit..."
+            local out ok hash err
+            out=$(python3 -c "
+import json, sys, os
+SEED_FILE = os.path.expanduser('~/.local/share/lumenyx-node/miner-key')
+seed = open(SEED_FILE).read().strip().lower()
+if seed.startswith('0x'): seed = seed[2:]
 
-        if [[ "$ok" == "true" ]] && [[ -n "$hash" ]]; then
-            print_ok "Transaction submitted: $hash"
+from substrateinterface import SubstrateInterface, Keypair, KeypairType
+substrate = SubstrateInterface(url='$WS')
+kp = Keypair.create_from_seed(bytes.fromhex(seed), crypto_type=KeypairType.SR25519)
+
+amount_str = '$amount'
+s = amount_str.strip().replace(',', '.')
+if '.' in s:
+    a, b = s.split('.', 1)
+    b = (b + '0' * 18)[:18]
+    value = int(a) * (10 ** 18) + int(b)
+else:
+    value = int(s) * (10 ** 18)
+
+call = substrate.compose_call(
+    call_module='EvmBridge',
+    call_function='deposit',
+    call_params={'address': '$recipient', 'value': value},
+)
+extrinsic = substrate.create_signed_extrinsic(call=call, keypair=kp)
+try:
+    receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+    out = {'ok': bool(getattr(receipt, 'is_success', True)), 'hash': getattr(receipt, 'extrinsic_hash', None)}
+    print(json.dumps(out))
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': str(e)}))
+" 2>/dev/null || true)
+            ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
+            hash=$(echo "$out" | grep -o '"hash": *"[^"]*"' | cut -d'"' -f4)
+            err=$(echo "$out" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)
+
+            if [[ "$ok" == "true" ]] && [[ -n "$hash" ]]; then
+                print_ok "Transaction submitted: $hash"
+            else
+                print_error "Send failed"
+                [[ -n "$err" ]] && echo "  Error: $err"
+                [[ -n "$out" ]] && echo "  Raw: $out"
+            fi
         else
-            print_error "Send failed"
-            [[ -n "$err" ]] && echo "  Error: $err"
-            [[ -n "$out" ]] && echo "  Raw: $out"
+            print_info "Signing & submitting extrinsic..."
+            local out ok hash err
+            out=$(python3 "$SUBSTRATE_SEND_PY" --ws "$WS" --to "$recipient" --amount "$amount" --decimals 18 --wait inclusion 2>/dev/null || true)
+            ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
+            hash=$(echo "$out" | grep -o '"hash": *"[^"]*"' | cut -d'"' -f4)
+            err=$(echo "$out" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)
+
+            if [[ "$ok" == "true" ]] && [[ -n "$hash" ]]; then
+                print_ok "Transaction submitted: $hash"
+            else
+                print_error "Send failed"
+                [[ -n "$err" ]] && echo "  Error: $err"
+                [[ -n "$out" ]] && echo "  Raw: $out"
+            fi
         fi
     fi
 
@@ -2050,26 +2207,6 @@ menu_receive() {
     if ! ask_yes_no "Show address?"; then
         return
     fi
-    print_dashboard
-    echo ""
-    echo -e "${CYAN}═══ RECEIVE LUMENYX ═══${NC}"
-    echo ""
-
-    local addr
-    addr=$(get_address)
-    if [[ -n "$addr" ]]; then
-        echo "  Share this address to receive LUMENYX:"
-        echo ""
-        echo -e "  ${GREEN}${BOLD}$addr${NC}"
-        echo ""
-        echo "  (Copy the address above)"
-    else
-        print_error "No wallet found"
-    fi
-
-    wait_enter
-}
-
 menu_history() {
     echo ""
     if ! ask_yes_no "Show history?"; then
@@ -2114,7 +2251,7 @@ menu_tx_history() {
     print_info "Scanning recent blocks for transactions..."
 
     local out
-    out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 0 --decimals 12 2>&1 || true)
+    out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 0 --decimals 18 2>&1 || true)
 
     if echo "$out" | grep -q '"ok": true'; then
         echo "$out" | python3 -c 'import sys,json
@@ -2127,7 +2264,7 @@ else:
         sym="[OUT]" if tx["type"]=="SENT" else "[IN] "
         addr = tx["from"] if tx["type"]=="RECV" else tx["to"]
         label = "From:" if tx["type"]=="RECV" else "To:  "
-        print("  %s Block #%d | %12.3f LUMENYX | %s %s" % (sym,tx["block"],tx["amount"],label,addr))'
+        print("  %s Block #%d | %12.3f LUMO | %s %s" % (sym,tx["block"],tx["amount"],label,addr))'
     else
         print_warning "Could not fetch transactions"
     fi

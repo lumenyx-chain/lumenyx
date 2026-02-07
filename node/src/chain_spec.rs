@@ -1,11 +1,15 @@
-//! # LUMENYX Chain Specification - PoW LongestChain
+//! # LUMO Chain Specification - PoW LongestChain
 //!
 //! Defines genesis configuration for development, testnet, and mainnet.
 //!
 //! - No authorities needed - anyone can mine
-//! - Total Supply: 21,000,000 LUMENYX
+//! - Total Supply: 21,000,000 LUMO
 //! - Distribution: 100% through mining
 //! - No pre-allocations. Pure fair launch.
+//!
+//! Hard fork v2.3.0 at block 440,000:
+//!   - Decimals: 12 → 18 (standard EVM)
+//!   - Ticker: LUMENYX → LUMO
 
 use lumenyx_runtime::{AccountId, Signature, WASM_BINARY};
 use sc_service::ChainType;
@@ -18,13 +22,15 @@ pub type ChainSpec = sc_service::GenericChainSpec;
 // GENESIS CONSTANTS
 // ============================================
 
-/// Genesis block message - The reason LUMENYX exists
+/// Genesis block message
 pub const GENESIS_MESSAGE: &str =
-    "Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you.";
+    "Bitcoin started with a headline. Ethereum started with a premine. LUMO starts with you.";
 
-/// Network properties
-pub const TOKEN_DECIMALS: u32 = 12;
-pub const TOKEN_SYMBOL: &str = "LUMENYX";
+/// Network properties - post-fork values (displayed in explorer/wallets)
+/// NOTE: The actual on-chain behavior is fork-aware via runtime logic.
+/// These properties tell wallets/explorers the current format.
+pub const TOKEN_DECIMALS: u32 = 18;
+pub const TOKEN_SYMBOL: &str = "LUMO";
 
 // ============================================
 // HELPER FUNCTIONS
@@ -75,7 +81,7 @@ pub fn development_config() -> Result<ChainSpec, String> {
         WASM_BINARY.ok_or_else(|| "WASM binary not available".to_string())?,
         None,
     )
-    .with_name("LUMENYX Development")
+    .with_name("LUMO Development")
     .with_id("lumenyx_dev")
     .with_chain_type(ChainType::Development)
     .with_genesis_config_patch(development_genesis(vec![
@@ -98,7 +104,7 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
         WASM_BINARY.ok_or_else(|| "WASM binary not available".to_string())?,
         None,
     )
-    .with_name("LUMENYX Local Testnet")
+    .with_name("LUMO Local Testnet")
     .with_id("lumenyx_local_testnet")
     .with_chain_type(ChainType::Local)
     .with_genesis_config_patch(development_genesis(vec![
@@ -122,7 +128,7 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 /// the genesis hash remains 0xd3b7...7676 regardless of
 /// how the runtime is compiled.
 ///
-/// LUMENYX - Decentralized Blockchain
+/// LUMO - Decentralized Blockchain
 /// - 21M supply (like Bitcoin)
 /// - PoW consensus
 /// - 2.5 second blocks
@@ -143,7 +149,7 @@ pub fn testnet_config() -> Result<ChainSpec, String> {
         WASM_BINARY.ok_or_else(|| "WASM binary not available".to_string())?,
         None,
     )
-    .with_name("LUMENYX Testnet")
+    .with_name("LUMO Testnet")
     .with_id("lumenyx_testnet")
     .with_chain_type(ChainType::Live)
     .with_genesis_config_patch(development_genesis(vec![]))

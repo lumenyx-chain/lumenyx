@@ -1,11 +1,11 @@
-//! # LUMENYX Emission Pallet
+//! # LUMO Emission Pallet
 //!
 //! Simple emission like Bitcoin:
-//! - ~0.208 LUMENYX per block from genesis
+//! - ~0.208 LUMO per block from genesis
 //! - Halving every 4 years (50,492,160 blocks)
-//! - Total supply: 21,000,000 LUMENYX (immutable)
+//! - Total supply: 21,000,000 LUMO (immutable)
 //!
-//! Daily emission: ~7,187 LUMENYX (34,560 blocks * 0.208)
+//! Daily emission: ~7,187 LUMO (34,560 blocks * 0.208)
 //! ~50% mined in first 4 years
 
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -51,7 +51,7 @@ pub mod pallet {
     #[pallet::getter(fn current_halving_era)]
     pub type CurrentHalvingEra<T: Config> = StorageValue<_, u32, ValueQuery>;
 
-    /// Total LUMENYX emitted through mining (this pallet only)
+    /// Total LUMO emitted through mining (this pallet only)
     #[pallet::storage]
     #[pallet::getter(fn total_emitted)]
     pub type TotalEmitted<T: Config> = StorageValue<_, BalanceOf<T>, ValueQuery>;
