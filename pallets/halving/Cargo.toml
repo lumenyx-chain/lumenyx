@@ -6,11 +6,13 @@ edition = "2021"
 [dependencies]
 codec = { package = "parity-scale-codec", version = "3.6", default-features = false, features = ["derive"] }
 scale-info = { version = "2.10", default-features = false, features = ["derive"] }
+log = { version = "0.4", default-features = false }
 frame-support = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 frame-system = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-core = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 sp-std = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
+pallet-balances = { git = "https://github.com/paritytech/polkadot-sdk", branch = "stable2409", default-features = false }
 lumenyx-primitives = { path = "../../primitives", default-features = false }
 
 [features]
@@ -18,10 +20,12 @@ default = ["std"]
 std = [
     "codec/std",
     "scale-info/std",
+    "log/std",
     "frame-support/std",
     "frame-system/std",
     "sp-runtime/std",
     "sp-core/std",
     "sp-std/std",
+    "pallet-balances/std",
     "lumenyx-primitives/std",
 ]

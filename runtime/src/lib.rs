@@ -77,7 +77,7 @@ use pallet_evm::{
 };
 
 // Import our primitives
-pub use lumenyx_primitives::{BLOCKS_PER_DAY, BLOCKS_PER_YEAR, BLOCK_TIME_MS, FORK_HEIGHT_V2, DECIMAL_MIGRATION_FACTOR};
+pub use lumenyx_primitives::{BLOCKS_PER_DAY, BLOCKS_PER_YEAR, BLOCK_TIME_MS};
 use pallet_evm_bridge;
 
 pub type BlockNumber = u32;
@@ -266,87 +266,10 @@ impl pallet_halving::Config for Runtime {
 // ============================================
 // BALANCE MIGRATION: 12 → 18 DECIMALS
 // ============================================
-// At FORK_HEIGHT_V2 (block 440,000), all Substrate balances
-// are multiplied by DECIMAL_MIGRATION_FACTOR (10^6).
-// This is a one-shot migration triggered on_initialize.
-
-/// Storage flag to ensure migration runs exactly once
-pub struct DecimalMigrationDone;
-impl frame_support::traits::StorageInstance for DecimalMigrationDone {
-    fn pallet_prefix() -> &'static str { "DecimalMigration" }
-    const STORAGE_PREFIX: &'static str = "Done";
-}
-pub type DecimalMigrationDoneStorage = frame_support::storage::types::StorageValue<
-    DecimalMigrationDone,
-    bool,
-    frame_support::traits::ValueQuery,
->;
-
-/// Hook that runs the balance migration at the fork block
-pub struct DecimalMigrationHook;
-impl<T: frame_system::Config> frame_support::traits::OnInitialize<frame_system::pallet_prelude::BlockNumberFor<T>> for DecimalMigrationHook
-where
-    T: pallet_balances::Config<Balance = u128>,
-{
-    fn on_initialize(n: frame_system::pallet_prelude::BlockNumberFor<T>) -> Weight {
-        let block_u32: u32 = n.try_into().unwrap_or(0);
-
-        if block_u32 != FORK_HEIGHT_V2 {
-            return Weight::zero();
-        }
-
-        if DecimalMigrationDoneStorage::get() {
-            return Weight::zero();
-        }
-
-        log::info!("🔄 FORK v2.3.0: Starting balance migration at block {}", block_u32);
-        log::info!("🔄 Multiplying all balances by {} (12→18 decimals)", DECIMAL_MIGRATION_FACTOR);
-
-        let mut count: u64 = 0;
-
-        // Migrate all Substrate accounts
-        // We iterate over System::Account which holds AccountData<Balance>
-        frame_system::Account::<Runtime>::translate::<
-            frame_system::AccountInfo<Nonce, pallet_balances::AccountData<Balance>>,
-            _,
-        >(|_key, mut info| {
-            info.data.free = info.data.free.saturating_mul(DECIMAL_MIGRATION_FACTOR);
-            info.data.reserved = info.data.reserved.saturating_mul(DECIMAL_MIGRATION_FACTOR);
-            info.data.frozen = info.data.frozen.saturating_mul(DECIMAL_MIGRATION_FACTOR);
-            count += 1;
-            Some(info)
-        });
-
-        // Migrate TotalIssuance
-        let old_issuance = pallet_balances::TotalIssuance::<Runtime>::get();
-        let new_issuance = old_issuance.saturating_mul(DECIMAL_MIGRATION_FACTOR);
-        pallet_balances::TotalIssuance::<Runtime>::put(new_issuance);
-
-        // Migrate EVM account balances
-        // EVM stores balances in its own AccountCodes/AccountStorages but the actual
-        // balance is managed by pallet_balances via the AddressMapping, so the
-        // System::Account migration above covers mapped EVM accounts too.
-
-        // Migrate halving TotalEmitted
-        pallet_halving::TotalEmitted::<Runtime>::mutate(|total| {
-            *total = total.saturating_mul(DECIMAL_MIGRATION_FACTOR.try_into().unwrap_or_default());
-        });
-
-        // Also migrate the base fee in pallet_base_fee storage
-        pallet_base_fee::BaseFeePerGas::<Runtime>::mutate(|base| {
-            *base = *base * U256::from(DECIMAL_MIGRATION_FACTOR);
-        });
-
-        DecimalMigrationDoneStorage::put(true);
-
-        log::info!("✅ FORK v2.3.0: Migration complete! {} accounts migrated", count);
-        log::info!("✅ TotalIssuance: {} → {}", old_issuance, new_issuance);
-        log::info!("✅ Decimals: 12 → 18 | Ticker: LUMENYX → LUMO");
-
-        // Conservative weight estimate
-        Weight::from_parts(count * 100_000, count * 1000)
-    }
-}
+// DECIMAL MIGRATION (v2.3.0)
+// Migration logic lives in pallet_halving::on_initialize
+// Triggered at block FORK_HEIGHT_V2 (440,000)
+// ============================================
 
 // ============================================
 // DIFFICULTY ADJUSTMENT PALLET

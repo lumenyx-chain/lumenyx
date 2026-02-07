@@ -391,7 +391,7 @@ def read_seed_hex():
     int(s, 16)
     return s
 
-def amount_to_planck(amount_str, decimals=12):
+def amount_to_planck(amount_str, decimals=18):
     s = amount_str.strip().replace(",", ".")
     if s.count(".") > 1:
         raise SystemExit("Invalid amount")
@@ -406,7 +406,7 @@ def main():
     ap.add_argument("--ws", required=True)
     ap.add_argument("--to", required=True)
     ap.add_argument("--amount", required=True)
-    ap.add_argument("--decimals", type=int, default=12)
+    ap.add_argument("--decimals", type=int, default=18)
     ap.add_argument("--wait", choices=["none","inclusion","finalization"], default="inclusion")
     args = ap.parse_args()
 
@@ -476,7 +476,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ws", required=True)
     ap.add_argument("--mode", choices=["balance","block","peers"], required=True)
-    ap.add_argument("--decimals", type=int, default=12)
+    ap.add_argument("--decimals", type=int, default=18)
     args = ap.parse_args()
 
     try:
@@ -570,7 +570,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ws", required=True)
     ap.add_argument("--blocks", type=int, default=0)
-    ap.add_argument("--decimals", type=int, default=12)
+    ap.add_argument("--decimals", type=int, default=18)
     args = ap.parse_args()
 
     try:

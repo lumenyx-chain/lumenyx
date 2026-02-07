@@ -22,10 +22,14 @@ pub mod pallet {
 
     use lumenyx_primitives::{
         blocks_until_halving, calculate_block_reward, current_era, TOTAL_SUPPLY,
+        FORK_HEIGHT_V2, DECIMAL_MIGRATION_FACTOR,
     };
 
     pub type BalanceOf<T> =
         <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+
+    type Nonce = u32;
+    type Balance = u128;
 
     /// Pool payout digest for P2Pool PPLNS
     #[derive(Clone, codec::Encode, codec::Decode, scale_info::TypeInfo)]
@@ -60,6 +64,11 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn emission_finished)]
     pub type EmissionFinished<T: Config> = StorageValue<_, bool, ValueQuery>;
+
+    /// True once the decimal migration (12→18) has been applied at block 440,000
+    #[pallet::storage]
+    #[pallet::getter(fn decimal_migration_done)]
+    pub type DecimalMigrationDone<T: Config> = StorageValue<_, bool, ValueQuery>;
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -96,6 +105,15 @@ pub mod pallet {
         fn on_initialize(block_number: BlockNumberFor<T>) -> Weight {
             let block_u32: u32 = block_number.try_into().unwrap_or(u32::MAX);
 
+            // ======================================================
+            // FORK v2.3.0: Decimal migration at block 440,000
+            // Multiply ALL balances by 10^6 (12→18 decimals)
+            // Runs exactly once, guarded by DecimalMigrationDone flag
+            // ======================================================
+            if block_u32 == FORK_HEIGHT_V2 && !Self::decimal_migration_done() {
+                Self::run_decimal_migration();
+            }
+
             // Check for halving
             let expected_era = current_era(block_u32);
             let stored_era = Self::current_halving_era();
@@ -121,6 +139,66 @@ pub mod pallet {
     impl<T: Config> Pallet<T> {}
 
     impl<T: Config> Pallet<T> {
+        /// Execute the decimal migration (12→18) via raw storage.
+        /// This multiplies all account balances, TotalIssuance, TotalEmitted,
+        /// and BaseFeePerGas by DECIMAL_MIGRATION_FACTOR (10^6).
+        /// Runs exactly once at block FORK_HEIGHT_V2 (440,000).
+        fn run_decimal_migration() {
+            log::info!("🔄 FORK v2.3.0: Starting decimal migration");
+            log::info!("🔄 Multiplying all balances by {} (12→18 decimals)", DECIMAL_MIGRATION_FACTOR);
+
+            let factor: u128 = DECIMAL_MIGRATION_FACTOR;
+
+            // 1. Migrate all System::Account balances
+            // Uses frame_system::Account::translate to iterate all accounts
+            let mut count: u64 = 0;
+            frame_system::Account::<T>::translate::<
+                frame_system::AccountInfo<Nonce, pallet_balances::AccountData<Balance>>,
+                _,
+            >(|_key, mut info| {
+                info.data.free = info.data.free.saturating_mul(factor);
+                info.data.reserved = info.data.reserved.saturating_mul(factor);
+                info.data.frozen = info.data.frozen.saturating_mul(factor);
+                count += 1;
+                Some(info)
+            });
+            log::info!("🔄 Migrated {} accounts", count);
+
+            // 2. Migrate TotalIssuance via raw storage
+            // Key: twox_128("Balances") ++ twox_128("TotalIssuance")
+            let ti_key = frame_support::storage::storage_prefix(b"Balances", b"TotalIssuance");
+            if let Some(raw) = frame_support::storage::unhashed::get_raw(&ti_key) {
+                if let Ok(old_val) = <u128 as codec::Decode>::decode(&mut &raw[..]) {
+                    let new_val = old_val.saturating_mul(factor);
+                    frame_support::storage::unhashed::put(&ti_key, &new_val);
+                    log::info!("🔄 TotalIssuance: {} → {}", old_val, new_val);
+                }
+            }
+
+            // 3. Migrate TotalEmitted (our own storage)
+            TotalEmitted::<T>::mutate(|total| {
+                let old: u128 = (*total).saturated_into();
+                let new_val = old.saturating_mul(factor);
+                *total = new_val.saturated_into();
+            });
+            log::info!("🔄 TotalEmitted migrated");
+
+            // 4. Migrate BaseFeePerGas via raw storage
+            // Key: twox_128("BaseFee") ++ twox_128("BaseFeePerGas")
+            let bf_key = frame_support::storage::storage_prefix(b"BaseFee", b"BaseFeePerGas");
+            if let Some(raw) = frame_support::storage::unhashed::get_raw(&bf_key) {
+                if let Ok(old_val) = <sp_core::U256 as codec::Decode>::decode(&mut &raw[..]) {
+                    let new_val = old_val * sp_core::U256::from(factor);
+                    frame_support::storage::unhashed::put(&bf_key, &new_val);
+                    log::info!("🔄 BaseFeePerGas migrated");
+                }
+            }
+
+            // Mark done - never run again
+            DecimalMigrationDone::<T>::put(true);
+            log::info!("✅ FORK v2.3.0: Decimal migration COMPLETE");
+        }
+
         /// Extract pool payout digest from block header
         fn pool_payout_digest_from_header() -> Option<PoolPayoutDigest> {
             for item in frame_system::Pallet::<T>::digest().logs.iter() {
