@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMO SETUP SCRIPT v2.3.0 - Hard Fork: 18 Decimals + Fast Mining + Rebrand
+# LUMENYX SETUP SCRIPT v2.3.0 - Hard Fork: 18 Decimals + Fast Mining + Rebrand
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
@@ -201,12 +201,12 @@ print_logo() {
     echo -e "${VIOLET}"
     echo "╔════════════════════════════════════════════════════════════════════╗"
     echo "║                                                                    ║"
-    echo -e "║   ${BRIGHT_VIOLET}██╗     ██╗   ██╗███╗   ███╗ ██████╗ ${VIOLET}                              ║"
-    echo -e "║   ${BRIGHT_VIOLET}██║     ██║   ██║████╗ ████║██╔═══██╗${VIOLET}                              ║"
-    echo -e "║   ${PINK}██║     ██║   ██║██╔████╔██║██║   ██║${VIOLET}                              ║"
-    echo -e "║   ${PINK}██║     ██║   ██║██║╚██╔╝██║██║   ██║${VIOLET}                              ║"
-    echo -e "║   ${CYAN}███████╗╚██████╔╝██║ ╚═╝ ██║╚██████╔╝${VIOLET}                              ║"
-    echo -e "║   ${CYAN}╚══════╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ${VIOLET}                              ║"
+    echo -e "║   ${BRIGHT_VIOLET}██╗     ██╗   ██╗███╗   ███╗███████╗███╗   ██╗██╗   ██╗██╗  ██╗${VIOLET}  ║"
+    echo -e "║   ${BRIGHT_VIOLET}██║     ██║   ██║████╗ ████║██╔════╝████╗  ██║╚██╗ ██╔╝╚██╗██╔╝${VIOLET}  ║"
+    echo -e "║   ${PINK}██║     ██║   ██║██╔████╔██║█████╗  ██╔██╗ ██║ ╚████╔╝  ╚███╔╝ ${VIOLET}  ║"
+    echo -e "║   ${PINK}██║     ██║   ██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║  ╚██╔╝   ██╔██╗ ${VIOLET}  ║"
+    echo -e "║   ${CYAN}███████╗╚██████╔╝██║ ╚═╝ ██║███████╗██║ ╚████║   ██║   ██╔╝ ██╗${VIOLET}  ║"
+    echo -e "║   ${CYAN}╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝${VIOLET}  ║"
     echo "║                                                                    ║"
     echo -e "╚════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
@@ -854,7 +854,7 @@ get_bootnodes() {
     echo -e "${CYAN}═══ BOOTNODE SETUP ═══${NC}" >&2
     echo "" >&2
     echo "  To connect to the network, you need a bootnode address." >&2
-    echo "  Get it from someone already running LUMO." >&2
+    echo "  Get it from someone already running LUMENYX." >&2
     echo "" >&2
     echo "  Format: /ip4/IP/tcp/30333/p2p/PEER_ID" >&2
     echo "" >&2
@@ -879,7 +879,7 @@ prompt_clean_install() {
     echo -e "${YELLOW}║                  EXISTING DATA DETECTED                            ║${NC}"
     echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  Found existing LUMO on this machine:"
+    echo "  Found existing LUMENYX on this machine:"
     echo ""
     [[ -d "$LUMENYX_DIR" ]] && echo -e "    ${CYAN}•${NC} $LUMENYX_DIR (binary, config, logs)"
     [[ -d "$DATA_DIR" ]] && echo -e "    ${CYAN}•${NC} $DATA_DIR (blockchain data, wallet)"
@@ -942,15 +942,15 @@ is_first_run() {
 step_welcome() {
     clear
     print_logo
-    echo -e "${BOLD}                    Welcome to LUMO${NC}"
+    echo -e "${BOLD}                    Welcome to LUMENYX${NC}"
     echo ""
     echo -e "  ${CYAN}\"Bitcoin started with a headline. Ethereum started with a premine.${NC}"
-    echo -e "  ${CYAN} LUMO starts with you.\"${NC}"
+    echo -e "  ${CYAN} LUMENYX starts with you.\"${NC}"
     echo ""
     echo "  This script will:"
     echo ""
     echo -e "    ${GREEN}1.${NC} Check your system"
-    echo -e "    ${GREEN}2.${NC} Download LUMO node"
+    echo -e "    ${GREEN}2.${NC} Download LUMENYX node"
     echo -e "    ${GREEN}3.${NC} Create your wallet"
     echo -e "    ${GREEN}4.${NC} Start mining"
     echo ""
@@ -1513,7 +1513,7 @@ create_systemd_service() {
     # - use ExecStartPre guards
     cat > /tmp/lumenyx.service <<EOF
 [Unit]
-Description=LUMO Node (24/7 Mining)
+Description=LUMENYX Node (24/7 Mining)
 After=network-online.target
 Wants=network-online.target
 
@@ -1667,7 +1667,7 @@ WATCHDOG_EOF
 create_watchdog_service() {
     cat > /tmp/lumenyx-watchdog.service <<EOF
 [Unit]
-Description=LUMO Watchdog
+Description=LUMENYX Watchdog
 After=lumenyx.service
 Wants=lumenyx.service
 
@@ -1683,7 +1683,7 @@ EOF
 create_watchdog_timer() {
     cat > /tmp/lumenyx-watchdog.timer <<EOF
 [Unit]
-Description=Run LUMO watchdog periodically
+Description=Run LUMENYX watchdog periodically
 
 [Timer]
 OnBootSec=60s
@@ -1722,8 +1722,8 @@ create_autostart_desktop() {
     cat > "$AUTOSTART_FILE" <<EOF
 [Desktop Entry]
 Type=Application
-Name=LUMO Wallet
-Comment=LUMO Mining Dashboard
+Name=LUMENYX Wallet
+Comment=LUMENYX Mining Dashboard
 Exec=gnome-terminal -- bash -c '$script_path; exec bash'
 Terminal=false
 Hidden=false

@@ -1,4 +1,4 @@
-//! LUMO Core Primitives
+//! LUMENYX Core Primitives
 //!
 //! Decentralized cryptocurrency with fixed supply.
 //! 21M fixed supply, no team, no foundation. Just code.
@@ -59,7 +59,7 @@ pub const DECIMALS: u8 = 18;
 /// Post-fork: token symbol
 pub const SYMBOL: &str = "LUMO";
 
-/// Post-fork: 1 LUMO = 10^18 planck
+/// Post-fork: 1 LUMENYX = 10^18 planck
 pub const LUMENYX: u128 = 1_000_000_000_000_000_000;
 
 /// Post-fork: block reward (same human amount, more planck)
@@ -75,7 +75,7 @@ pub const BASE_CONTRACT_FEE: u128 = 10_000_000_000_000;
 // SHARED CONSTANTS (unchanged across fork)
 // ============================================
 
-/// Total supply: 21,000,000 LUMO (fixed, NEVER MORE)
+/// Total supply: 21,000,000 LUMENYX (fixed, NEVER MORE)
 pub const TOTAL_SUPPLY: u128 = 21_000_000 * LUMENYX;
 
 /// Block time in milliseconds: 2.5 seconds
@@ -188,7 +188,7 @@ pub fn symbol_at_block(block_number: BlockNumber) -> &'static str {
 }
 
 pub const GENESIS_MESSAGE: &str =
-    "Bitcoin started with a headline. Ethereum started with a premine. LUMO starts with you.";
+    "Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you.";
 
 #[cfg(test)]
 mod tests {
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_daily_emission() {
-        // Post-fork: ~7,187 LUMO per day
+        // Post-fork: ~7,187 LUMENYX per day (ticker: LUMO)
         let daily = daily_emission(FORK_HEIGHT_V2);
         let daily_lumo = daily / LUMENYX;
         assert!(daily_lumo >= 7000 && daily_lumo <= 7500);

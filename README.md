@@ -1,4 +1,4 @@
-# LUMO
+# LUMENYX
 
 ---
 
@@ -8,7 +8,7 @@
 
 ### Abstract
 
-A purely peer-to-peer version of electronic cash with fixed supply and smart contracts. The network uses proof-of-work consensus with 2.5 second blocks. Total supply is limited to 21,000,000 LUMO with a halving emission schedule. No governance, no team allocation, no venture capital.
+A purely peer-to-peer version of electronic cash with fixed supply and smart contracts. The network uses proof-of-work consensus with 2.5 second blocks. Total supply is limited to 21,000,000 LUMENYX (ticker: LUMO) with a halving emission schedule. No governance, no team allocation, no venture capital.
 
 ---
 
@@ -31,7 +31,7 @@ The script will:
 - Start mining automatically
 - Auto-update when new versions are available
 
-📖 **[Why choose LUMO?](docs/WHY_LUMENYX.md)**
+📖 **[Why choose LUMENYX?](docs/WHY_LUMENYX.md)**
 
 🌐 **[Bootnodes](bootnodes.txt)** - Network bootstrap nodes
 
@@ -62,7 +62,7 @@ Browsers block insecure WebSocket by default. Use Firefox with this fix:
 7. Close Firefox completely and reopen it
 8. Go to: https://polkadot.js.org/apps/?rpc=ws://207.180.204.4:9944
    (This is the public Archive node. Or use your own node's IP.)
-9. Wait a few seconds - you'll see "LUMO Mainnet" in top left
+9. Wait a few seconds - you'll see "LUMENYX Mainnet" in top left
 
 Now you can see blocks, validators, balances, everything.
 
@@ -73,7 +73,7 @@ Now you can see blocks, validators, balances, everything.
 In 2009, Bitcoin proved that digital scarcity was possible.
 In 2015, Ethereum proved that programmable money was possible.
 
-LUMO combines both:
+LUMENYX combines both:
 - Fixed supply (21,000,000)
 - Smart contracts (EVM compatible — standard 18 decimals)
 - Fast blocks (2.5 seconds)
@@ -89,7 +89,7 @@ Proof of Work with LongestChain.
 | Parameter | Value |
 |-----------|-------|
 | Block time | 2.5 seconds |
-| Hash function | RX-LX (RandomX-LUMO) |
+| Hash function | RX-LX (RandomX-LUMENYX) |
 | Mining mode | Fast (Dataset, ~2GB RAM, 5-7x faster) |
 | ASIC resistance | Yes (custom SBOX, pointer chasing) |
 
@@ -125,9 +125,10 @@ Full EVM compatibility with standard 18 decimals. Deploy Solidity contracts with
 |----------|-------|
 | Chain ID | 7777 |
 | Decimals | 18 (standard EVM) |
+| Ticker | LUMO |
 | Gas model | Ethereum-compatible (EIP-1559) |
 
-Everything built on Ethereum can be built on LUMO — no decimal workarounds needed.
+Everything built on Ethereum can be built on LUMENYX — no decimal workarounds needed.
 
 ---
 
@@ -170,7 +171,7 @@ Like Bitcoin, the protocol is set in stone. Only the community can change it thr
 | Version | Block | Changes |
 |---------|-------|---------|
 | v2.2.5 | 125,000 | ASERT difficulty fix |
-| v2.3.0 | 440,000 | 18 decimals, fast mining, LUMO rebrand |
+| v2.3.0 | 440,000 | 18 decimals, fast mining, ticker LUMO |
 
 ---
 
@@ -183,21 +184,21 @@ Like Bitcoin, the protocol is set in stone. Only the community can change it thr
 | **Decimals** | `18` (standard EVM) |
 | **Consensus** | PoW with RX-LX algorithm (RandomX fork, CPU only) |
 | **Block time** | ~2.5 seconds |
-| **Token** | LUMO |
+| **Chain** | LUMENYX |
 | **Ticker** | LUMO — meaning "light" in Esperanto |
 | **EVM** | Full Solidity compatibility |
 
 With MetaMask (or any EVM wallet):
 
 1. Add a new network with the RPC above
-2. Chain ID: `7777`, Decimals: `18`
+2. Chain ID: `7777`, Decimals: `18`, Symbol: `LUMO`
 3. Deploy with Hardhat, Foundry, Remix — no workarounds needed
 
 ---
 
 ### 10. Conclusion
 
-LUMO is digital cash for the next era:
+LUMENYX is digital cash for the next era:
 - Scarce (21M cap)
 - Fast (2.5 sec blocks)
 - Programmable (EVM, 18 decimals)
@@ -209,7 +210,7 @@ Just code and consensus.
 
 ---
 
-> *"Bitcoin started with a headline. Ethereum started with a premine. LUMO starts with you."*
+> *"Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you."*
 
 ---
 

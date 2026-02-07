@@ -1,9 +1,9 @@
-//! # LUMO Chain Specification - PoW LongestChain
+//! # LUMENYX Chain Specification - PoW LongestChain
 //!
 //! Defines genesis configuration for development, testnet, and mainnet.
 //!
 //! - No authorities needed - anyone can mine
-//! - Total Supply: 21,000,000 LUMO
+//! - Total Supply: 21,000,000 LUMENYX (ticker: LUMO)
 //! - Distribution: 100% through mining
 //! - No pre-allocations. Pure fair launch.
 //!
@@ -24,7 +24,7 @@ pub type ChainSpec = sc_service::GenericChainSpec;
 
 /// Genesis block message
 pub const GENESIS_MESSAGE: &str =
-    "Bitcoin started with a headline. Ethereum started with a premine. LUMO starts with you.";
+    "Bitcoin started with a headline. Ethereum started with a premine. LUMENYX starts with you.";
 
 /// Network properties - post-fork values (displayed in explorer/wallets)
 /// NOTE: The actual on-chain behavior is fork-aware via runtime logic.
@@ -81,7 +81,7 @@ pub fn development_config() -> Result<ChainSpec, String> {
         WASM_BINARY.ok_or_else(|| "WASM binary not available".to_string())?,
         None,
     )
-    .with_name("LUMO Development")
+    .with_name("LUMENYX Development")
     .with_id("lumenyx_dev")
     .with_chain_type(ChainType::Development)
     .with_genesis_config_patch(development_genesis(vec![
@@ -104,7 +104,7 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
         WASM_BINARY.ok_or_else(|| "WASM binary not available".to_string())?,
         None,
     )
-    .with_name("LUMO Local Testnet")
+    .with_name("LUMENYX Local Testnet")
     .with_id("lumenyx_local_testnet")
     .with_chain_type(ChainType::Local)
     .with_genesis_config_patch(development_genesis(vec![
@@ -128,7 +128,7 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 /// the genesis hash remains 0xd3b7...7676 regardless of
 /// how the runtime is compiled.
 ///
-/// LUMO - Decentralized Blockchain
+/// LUMENYX - Decentralized Blockchain
 /// - 21M supply (like Bitcoin)
 /// - PoW consensus
 /// - 2.5 second blocks
@@ -149,7 +149,7 @@ pub fn testnet_config() -> Result<ChainSpec, String> {
         WASM_BINARY.ok_or_else(|| "WASM binary not available".to_string())?,
         None,
     )
-    .with_name("LUMO Testnet")
+    .with_name("LUMENYX Testnet")
     .with_id("lumenyx_testnet")
     .with_chain_type(ChainType::Live)
     .with_genesis_config_patch(development_genesis(vec![]))

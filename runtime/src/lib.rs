@@ -1,4 +1,4 @@
-//! LUMO Runtime
+//! LUMENYX Runtime
 //!
 //! Decentralized blockchain:
 //! - Fixed supply (21M)
@@ -48,7 +48,7 @@ use pallet_transaction_payment::FungibleAdapter;
 // MINER ADDRESS DIGEST FOR PoW
 // ============================================
 
-/// Engine ID for LUMO PoW consensus
+/// Engine ID for LUMENYX PoW consensus
 pub const LUMENYX_ENGINE_ID: sp_runtime::ConsensusEngineId = *b"LMNX";
 
 /// Digest to identify block miner for reward distribution
@@ -97,7 +97,7 @@ pub const SLOT_DURATION: u64 = MILLISECS_PER_BLOCK;
 /// NOTE: This is set to post-fork value. Pre-fork blocks already passed genesis.
 pub const EXISTENTIAL_DEPOSIT: Balance = 500_000_000;
 
-/// EVM Chain ID - unique identifier for LUMO
+/// EVM Chain ID - unique identifier for LUMENYX
 pub const EVM_CHAIN_ID: u64 = 7777;
 
 #[sp_version::runtime_version]
@@ -255,7 +255,7 @@ impl pallet_authorship::Config for Runtime {
 }
 
 // ============================================
-// LUMO CUSTOM PALLETS
+// LUMENYX CUSTOM PALLETS
 // ============================================
 
 impl pallet_halving::Config for Runtime {
