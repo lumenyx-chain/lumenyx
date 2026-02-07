@@ -422,9 +422,6 @@ impl MinerState {
                         }
                     };
 
-                    // v2.3.0: Allocate Dataset for fast mode (~2GB RAM, 5-7x faster)
-                    let mut dataset_opt: Option<rx_lx::Dataset> = None;
-
                     let mut vm_opt: Option<rx_lx::Vm> = None;
                     let mut last_seed_height: u64 = u64::MAX;
 
@@ -448,49 +445,16 @@ impl MinerState {
                             let seed_bytes: [u8; 32] = job.seed.into();
                             cache.init(&seed_bytes);
 
-                            // v2.3.0: Build Dataset from Cache, then create fast VM
-                            log::info!("Worker {}: Building dataset (fast mode)...", thread_id);
-                            match rx_lx::Dataset::alloc(flags) {
-                                Ok(mut ds) => {
-                                    ds.init(&cache);
-                                    match rx_lx::Vm::fast(flags, &ds) {
-                                        Ok(vm) => {
-                                            vm_opt = Some(vm);
-                                            dataset_opt = Some(ds);
-                                            log::info!("Worker {}: Fast mode VM ready", thread_id);
-                                        }
-                                        Err(e) => {
-                                            log::error!(
-                                                "Worker {}: Fast VM creation failed: {:?}",
-                                                thread_id,
-                                                e
-                                            );
-                                            vm_opt = None;
-                                            dataset_opt = None;
-                                            continue;
-                                        }
-                                    }
+                            // Use light mode VM (shared-memory friendly, no 2GB per thread)
+                            match rx_lx::Vm::light(flags, &cache) {
+                                Ok(vm) => {
+                                    vm_opt = Some(vm);
+                                    log::info!("Worker {}: Light mode VM ready (seed_height={})", thread_id, job.seed_height);
                                 }
                                 Err(e) => {
-                                    log::warn!(
-                                        "Worker {}: Dataset alloc failed ({:?}), falling back to light mode",
-                                        thread_id,
-                                        e
-                                    );
-                                    // Fallback to light mode if not enough RAM
-                                    match rx_lx::Vm::light(flags, &cache) {
-                                        Ok(vm) => vm_opt = Some(vm),
-                                        Err(e2) => {
-                                            log::error!(
-                                                "Worker {}: Light VM also failed: {:?}",
-                                                thread_id,
-                                                e2
-                                            );
-                                            vm_opt = None;
-                                            continue;
-                                        }
-                                    }
-                                    dataset_opt = None;
+                                    log::error!("Worker {}: VM creation failed: {:?}", thread_id, e);
+                                    vm_opt = None;
+                                    continue;
                                 }
                             }
                             last_seed_height = job.seed_height;
