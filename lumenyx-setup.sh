@@ -658,8 +658,9 @@ ensure_python_deps() {
 
     if $need_install; then
         print_info "Installing Python dependencies..."
-        python3 -m pip install --user substrate-interface eth-account >/dev/null 2>&1 || {
-            print_error "Failed to install Python dependencies. Run: pip3 install --user substrate-interface eth-account"
+        python3 -m pip install --user substrate-interface eth-account >/dev/null 2>&1 || \
+        python3 -m pip install --break-system-packages substrate-interface eth-account >/dev/null 2>&1 || {
+            print_error "Failed to install Python dependencies. Run: pip3 install --break-system-packages substrate-interface eth-account"
             return 1
         }
     fi
