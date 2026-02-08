@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v2.3.3 - Hard Fork: 18 Decimals + Fast Mining + Rebrand
+# LUMENYX SETUP SCRIPT v2.3.4 - Sync-safe mode + Bug fixes
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
 VERSION="2.3.3"
-SCRIPT_VERSION="2.3.3"
+SCRIPT_VERSION="2.3.4"
 
 # Colors - LUMO brand palette
 RED='\033[0;31m'
@@ -780,8 +780,8 @@ except Exception as e:
 FORK_HEIGHT=450000
 
 # Get current decimals based on best block number
-# Before block 440,000: 12 decimals (LUMENYX era)
-# After block 440,000: 18 decimals (LUMO era)
+# Before block 450,000: 12 decimals (LUMENYX era)
+# After block 450,000: 18 decimals (LUMO era)
 get_decimals() {
     local best
     best=$(curl -s -m 2 -H "Content-Type: application/json" \
@@ -933,6 +933,7 @@ prompt_clean_install() {
         fi
 
         rm -rf "$LUMENYX_DIR" "$DATA_DIR"
+        rm -f "$SYNC_SAFE_FILE" 2>/dev/null
         print_ok "Clean install complete!"
         sleep 1
         return 0
@@ -1244,14 +1245,48 @@ first_run() {
 # NODE CONTROL
 # ═══════════════════════════════════════════════════════════════════════════════
 
-start_node() {
-    if node_running; then
-        print_warning "Node is already running"
-        return
+## Sync-safe mode: detect if node needs initial sync
+## Mining during sync causes AnnouncePin worker freeze + DB corruption (BUG 1)
+## Solution: start without --validator during sync, restart with mining once synced
+
+SYNC_SAFE_FILE="$LUMENYX_DIR/sync_complete"
+
+is_sync_complete() {
+    [[ -f "$SYNC_SAFE_FILE" ]]
+}
+
+check_if_synced() {
+    # Quick check via RPC if node is synced
+    local result
+    result=$(curl -s -m 3 -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"system_syncState","params":[],"id":1}' \
+        http://127.0.0.1:9944 2>/dev/null || true)
+    
+    if [[ -z "$result" ]]; then
+        return 1
     fi
+    
+    local current highest
+    current=$(echo "$result" | python3 -c 'import sys,json; d=json.load(sys.stdin).get("result",{}); print(d.get("currentBlock",0))' 2>/dev/null || echo "0")
+    highest=$(echo "$result" | python3 -c 'import sys,json; d=json.load(sys.stdin).get("result",{}); print(d.get("highestBlock",0))' 2>/dev/null || echo "0")
+    
+    # Synced if within 50 blocks of highest (allow small gap)
+    if [[ "$highest" -gt 0 ]] && [[ "$current" -gt 0 ]]; then
+        local gap=$((highest - current))
+        if [[ "$gap" -le 50 ]]; then
+            return 0
+        fi
+    fi
+    return 1
+}
 
+mark_sync_complete() {
+    echo "$(date -Iseconds)" > "$SYNC_SAFE_FILE"
+}
+
+build_bootnode_args() {
     local bootnode_args="" bootnodes=""
-
+    
     if [[ -n "${BOOTNODES:-}" ]]; then
         bootnodes="$BOOTNODES"
     elif [[ -f "$LUMENYX_DIR/bootnodes.conf" ]]; then
@@ -1259,54 +1294,83 @@ start_node() {
     else
         bootnodes=$(curl -sL "$BOOTNODES_URL" 2>/dev/null | grep -v '^#' | grep -v '^$' | tr '\n' ' ')
     fi
-
+    
     if [[ -n "$bootnodes" ]]; then
         echo "$bootnodes" > "$LUMENYX_DIR/bootnodes.conf"
         for bn in $bootnodes; do
-            bootnode_args="$bootnode_args --bootnodes $bn"
+            bootnode_args="$bootnode_args --bootnodes $bn --reserved-nodes $bn"
         done
+    fi
+    
+    echo "$bootnode_args"
+}
+
+start_node() {
+    if node_running; then
+        print_warning "Node is already running"
+        return
     fi
 
-    # Reserved nodes: pin bootnodes for stable connection in small networks
-    local reserved_args=""
-    if [[ -n "$bootnodes" ]]; then
-        for bn in $bootnodes; do
-            reserved_args="$reserved_args --reserved-nodes $bn"
-        done
-    fi
+    local bootnode_args
+    bootnode_args=$(build_bootnode_args)
 
     # Ensure log file exists
     mkdir -p "$LUMENYX_DIR"
     touch "$LOG_FILE"
 
+    # Determine if we need sync-safe mode (no mining during sync)
+    local use_validator=true
+    if ! is_sync_complete; then
+        # Check if DB has substantial data (if not, it's a fresh sync)
+        local db_size=0
+        if [[ -d "$DATA_DIR/chains" ]]; then
+            db_size=$(du -sm "$DATA_DIR/chains" 2>/dev/null | awk '{print $1}' || echo "0")
+        fi
+        # Fresh or small DB = needs full sync = no mining
+        # Large DB but not marked complete = possibly corrupted, sync again safely
+        use_validator=false
+        print_warning "Sync-safe mode: syncing WITHOUT mining to prevent freeze"
+        print_info "Mining will start automatically once sync is complete"
+    fi
+
     # Get mining threads setting
     local threads
     threads=$(get_threads)
     
-    if [[ -n "$threads" ]]; then
-        export LUMENYX_MINING_THREADS="$threads"
-        print_info "Mining with $threads thread(s)"
-    else
-        unset LUMENYX_MINING_THREADS
-        local cores
-        cores=$(command -v nproc >/dev/null 2>&1 && nproc || echo "?")
-        print_info "Mining with AUTO threads (all $cores cores)"
+    if $use_validator; then
+        if [[ -n "$threads" ]]; then
+            export LUMENYX_MINING_THREADS="$threads"
+            print_info "Mining with $threads thread(s)"
+        else
+            unset LUMENYX_MINING_THREADS
+            local cores
+            cores=$(command -v nproc >/dev/null 2>&1 && nproc || echo "?")
+            print_info "Mining with AUTO threads (all $cores cores)"
+        fi
     fi
 
     print_info "Starting node..."
 
+    local validator_flag=""
+    local pool_flag=""
+    if $use_validator; then
+        validator_flag="--validator"
+        if pool_is_enabled; then
+            pool_flag="--pool-mode"
+        fi
+    fi
+
     nohup "$LUMENYX_DIR/$BINARY_NAME" \
         --base-path "$DATA_DIR" \
         --chain mainnet \
-        --validator \
-        $(pool_is_enabled && echo "--pool-mode") \
+        $validator_flag \
+        $pool_flag \
         --rpc-cors all \
         --unsafe-rpc-external \
         --rpc-methods Unsafe \
         --state-pruning 250000 \
         --blocks-pruning 250000 \
         $bootnode_args \
-        $reserved_args \
         >> "$LOG_FILE" 2>&1 &
 
     echo $! > "$PID_FILE"
@@ -1315,9 +1379,35 @@ start_node() {
     sleep 3
 
     if node_running; then
-        print_ok "Mining started! (PID: $(cat "$PID_FILE"))"
+        if $use_validator; then
+            print_ok "Mining started! (PID: $(cat "$PID_FILE"))"
+        else
+            print_ok "Syncing started! (PID: $(cat "$PID_FILE"))"
+            print_info "Node will switch to mining mode once fully synced"
+        fi
     else
         print_error "Failed to start - check: tail -50 $LOG_FILE"
+    fi
+}
+
+## Background sync monitor: when sync completes, restart with mining
+check_sync_and_upgrade() {
+    # Only relevant if sync not yet marked complete
+    if is_sync_complete; then
+        return
+    fi
+    
+    # Only check if node is running
+    if ! node_running; then
+        return
+    fi
+    
+    if check_if_synced; then
+        mark_sync_complete
+        print_ok "Sync complete! Restarting with mining enabled..."
+        stop_node
+        sleep 3
+        start_node
     fi
 }
 
@@ -1518,15 +1608,21 @@ daemon_guard_rails_or_die() {
 create_systemd_service() {
     daemon_compute_paths || return 1
 
+    local validator_flag=""
     local pool_flag=""
-    if pool_is_enabled; then
-        pool_flag=" --pool-mode"
+    
+    # Sync-safe: only add --validator if sync is complete
+    if is_sync_complete; then
+        validator_flag=" --validator"
+        if pool_is_enabled; then
+            pool_flag=" --pool-mode"
+        fi
     fi
 
     local threads_env=""
     local threads
     threads="$(get_threads)"
-    if [[ -n "$threads" ]]; then
+    if [[ -n "$threads" ]] && [[ -n "$validator_flag" ]]; then
         threads_env="Environment=LUMENYX_MINING_THREADS=$threads"
     fi
 
@@ -1574,7 +1670,7 @@ WorkingDirectory=$DAEMON_HOME
 
 ExecStartPre=/usr/bin/test -s $DAEMON_WALLET_TXT
 
-ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH --validator${pool_flag} --state-pruning 250000 --blocks-pruning 250000 $rpc_args $bootnode_args $reserved_nodes_args
+ExecStart=$DAEMON_BIN --chain mainnet --base-path $DAEMON_BASE_PATH${validator_flag}${pool_flag} --state-pruning 250000 --blocks-pruning 250000 $rpc_args $bootnode_args $reserved_nodes_args
 
 Restart=always
 RestartSec=3
@@ -1675,6 +1771,45 @@ main() {
         exit 0
     fi
 
+    # ---- Sync-safe upgrade: if sync completed, recreate service with --validator ----
+    local sync_file="__SYNC_SAFE_FILE__"
+    local service_has_validator
+    service_has_validator=$(grep -c "\-\-validator" /etc/systemd/system/lumenyx.service 2>/dev/null || echo "0")
+    
+    if [[ "$service_has_validator" -eq 0 ]] && [[ -f "$sync_file" ]]; then
+        # Sync is marked complete but service doesn't have --validator
+        # Signal the main script to recreate the service (we don't have the full logic here)
+        logger -t lumenyx-watchdog "Sync complete, signaling service upgrade to mining mode"
+        touch "/tmp/lumenyx-needs-mining-upgrade"
+    fi
+
+    if [[ "$service_has_validator" -eq 0 ]]; then
+        # In sync-only mode, check if sync is done via RPC
+        local result
+        result=$(curl -s -m 3 -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"system_syncState","params":[],"id":1}' \
+            http://127.0.0.1:9944 2>/dev/null || true)
+        
+        if [[ -n "$result" ]]; then
+            local current highest
+            current=$(echo "$result" | python3 -c 'import sys,json; d=json.load(sys.stdin).get("result",{}); print(d.get("currentBlock",0))' 2>/dev/null || echo "0")
+            highest=$(echo "$result" | python3 -c 'import sys,json; d=json.load(sys.stdin).get("result",{}); print(d.get("highestBlock",0))' 2>/dev/null || echo "0")
+            
+            if [[ "$highest" -gt 0 ]] && [[ "$current" -gt 0 ]]; then
+                local gap=$((highest - current))
+                if [[ "$gap" -le 50 ]]; then
+                    # Sync complete! Mark it and signal upgrade
+                    echo "$(date -Iseconds)" > "$sync_file"
+                    logger -t lumenyx-watchdog "Sync complete at block $current. Service needs restart with --validator."
+                    touch "/tmp/lumenyx-needs-mining-upgrade"
+                fi
+            fi
+        fi
+        # In sync-only mode, don't do mining checks - just exit
+        exit 0
+    fi
+    # ---- End sync-safe upgrade ----
+
     local now lm
     now="$(now_epoch)"
     lm="$(last_mining_epoch)"
@@ -1709,6 +1844,9 @@ main() {
 
 main "$@"
 WATCHDOG_EOF
+    
+    # Replace placeholder with actual sync_safe file path
+    sed -i "s|__SYNC_SAFE_FILE__|$DAEMON_HOME/.lumenyx/sync_complete|g" /tmp/lumenyx-watchdog.sh
     
     sudo mv /tmp/lumenyx-watchdog.sh "$WATCHDOG_SCRIPT"
     sudo chmod +x "$WATCHDOG_SCRIPT"
@@ -1850,6 +1988,11 @@ daemon_enable() {
 
     echo ""
     echo -e "${GREEN}✓ 24/7 Daemon mode ENABLED${NC}"
+    if is_sync_complete; then
+        echo -e "${GREEN}✓ Node will start mining immediately${NC}"
+    else
+        echo -e "${YELLOW}✓ Node will sync first, then start mining automatically${NC}"
+    fi
     echo -e "${GREEN}✓ Node will start automatically on boot${NC}"
     echo -e "${GREEN}✓ Watchdog will monitor and restart if needed${NC}"
     echo -e "${GREEN}✓ Script will open automatically on login (desktop)${NC}"
@@ -2009,12 +2152,22 @@ print_dashboard() {
     local status="STOPPED"
     local status_color="${RED}○"
     if daemon_is_running; then
-        status="MINING"; if pool_is_enabled; then status="MINING (POOL)"; else status="MINING (SOLO)"; fi
-        status="${status} [systemd]"
-        status_color="${GREEN}●"
+        if ! is_sync_complete; then
+            status="SYNCING (no mining)"
+            status_color="${YELLOW}◉"
+        else
+            status="MINING"; if pool_is_enabled; then status="MINING (POOL)"; else status="MINING (SOLO)"; fi
+            status="${status} [systemd]"
+            status_color="${GREEN}●"
+        fi
     elif node_running; then
-        status="MINING"; if pool_is_enabled; then status="MINING (POOL)"; else status="MINING (SOLO)"; fi
-        status_color="${GREEN}●"
+        if ! is_sync_complete; then
+            status="SYNCING (no mining)"
+            status_color="${YELLOW}◉"
+        else
+            status="MINING"; if pool_is_enabled; then status="MINING (POOL)"; else status="MINING (SOLO)"; fi
+            status_color="${GREEN}●"
+        fi
     fi
 
     # Get threads display
@@ -2127,6 +2280,18 @@ dashboard_loop() {
     check_evm_wallet
 
     while true; do
+        # Check if sync completed and node needs restart with mining
+        check_sync_and_upgrade
+        
+        # For daemon mode: if watchdog signaled sync complete, recreate service with --validator
+        if [[ -f "/tmp/lumenyx-needs-mining-upgrade" ]] && daemon_is_enabled; then
+            rm -f "/tmp/lumenyx-needs-mining-upgrade"
+            print_ok "Sync complete! Upgrading daemon to mining mode..."
+            create_systemd_service || true
+            sudo systemctl daemon-reload
+            sudo systemctl restart lumenyx.service
+        fi
+
         print_dashboard
         echo ""
         echo -e "  ${VIOLET}[1]${NC} ⛏️  Start/Stop Mining"
