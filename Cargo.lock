@@ -4645,7 +4645,7 @@ dependencies = [
 
 [[package]]
 name = "lumenyx-node"
-version = "2.2.5"
+version = "2.3.2"
 dependencies = [
  "async-channel 2.5.0",
  "async-trait",
@@ -4718,7 +4718,7 @@ dependencies = [
 
 [[package]]
 name = "lumenyx-primitives"
-version = "2.0.0"
+version = "2.3.0"
 dependencies = [
  "parity-scale-codec",
  "scale-info",
@@ -4729,7 +4729,7 @@ dependencies = [
 
 [[package]]
 name = "lumenyx-runtime"
-version = "2.0.0"
+version = "2.3.0"
 dependencies = [
  "fp-evm",
  "fp-rpc",
@@ -5794,10 +5794,12 @@ version = "2.0.0"
 dependencies = [
  "frame-support",
  "frame-system",
+ "log",
  "lumenyx-primitives",
  "parity-scale-codec",
  "scale-info",
  "sp-core",
+ "sp-io",
  "sp-runtime",
  "sp-std",
 ]
