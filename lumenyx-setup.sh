@@ -1080,6 +1080,9 @@ step_wallet() {
     echo -e "${CYAN}═══ STEP 3: WALLET ═══${NC}"
     echo ""
 
+    # Install Python deps first (needed for EVM wallet derivation)
+    ensure_python_deps >/dev/null 2>&1 || true
+
     if [[ -f "$DATA_DIR/miner-key" ]]; then
         print_ok "Wallet already exists"
         local addr
@@ -1111,7 +1114,7 @@ step_wallet() {
 
         # Derive real EVM address from mnemonic (BIP44 - same as MetaMask)
         local evm_output evm_address evm_privkey
-        evm_output=$(derive_evm_from_mnemonic "$seed_phrase")
+        evm_output=$(derive_evm_from_mnemonic "$seed_phrase" || true)
         evm_address=$(echo "$evm_output" | head -1)
         evm_privkey=$(echo "$evm_output" | tail -1)
 
@@ -1123,7 +1126,9 @@ step_wallet() {
         echo -e "  ${GREEN}${BOLD}$seed_phrase${NC}"
         echo ""
         echo -e "  SS58 (mining):   ${CYAN}$address${NC}"
-        echo -e "  EVM  (MetaMask): ${CYAN}$evm_address${NC}"
+        if [[ -n "$evm_address" ]]; then
+            echo -e "  EVM  (MetaMask): ${CYAN}$evm_address${NC}"
+        fi
         echo ""
         echo -e "  ${YELLOW}→ Import the same 12 words in MetaMask to use the DEX${NC}"
         echo ""
@@ -1135,9 +1140,11 @@ step_wallet() {
         echo "Address: $address" > "$LUMENYX_DIR/wallet.txt"
 
         # Save EVM wallet
-        echo "$evm_address" > "$LUMENYX_DIR/wallet_evm.txt"
-        echo "$evm_privkey" > "$LUMENYX_DIR/evm-key"
-        chmod 600 "$LUMENYX_DIR/evm-key"
+        if [[ -n "$evm_address" ]]; then
+            echo "$evm_address" > "$LUMENYX_DIR/wallet_evm.txt"
+            echo "$evm_privkey" > "$LUMENYX_DIR/evm-key"
+            chmod 600 "$LUMENYX_DIR/evm-key"
+        fi
 
         echo ""
         read -r -p "Type YES when you have saved your seed phrase: " confirm
@@ -1163,7 +1170,7 @@ step_wallet() {
 
         # Derive real EVM address from mnemonic (BIP44 - same as MetaMask)
         local evm_output evm_address evm_privkey
-        evm_output=$(derive_evm_from_mnemonic "$seed_phrase")
+        evm_output=$(derive_evm_from_mnemonic "$seed_phrase" || true)
         evm_address=$(echo "$evm_output" | head -1)
         evm_privkey=$(echo "$evm_output" | tail -1)
 
