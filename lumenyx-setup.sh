@@ -6,8 +6,8 @@
 
 set -e
 
-VERSION="2.3.3"
-SCRIPT_VERSION="2.3.4"
+VERSION="2.4.0"
+SCRIPT_VERSION="2.4.0"
 
 # Colors - LUMO brand palette
 RED='\033[0;31m'
@@ -777,11 +777,11 @@ except Exception as e:
 }
 
 # Fork height for decimal migration (12 → 18 decimals)
-FORK_HEIGHT=450000
+FORK_HEIGHT=470000
 
 # Get current decimals based on best block number
-# Before block 450,000: 12 decimals (LUMENYX era)
-# After block 450,000: 18 decimals (LUMO era)
+# Before block 470,000: 12 decimals (LUMENYX era)
+# After block 470,000: 18 decimals (LUMO era)
 get_decimals() {
     local best
     best=$(curl -s -m 2 -H "Content-Type: application/json" \
