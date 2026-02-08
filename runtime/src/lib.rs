@@ -105,7 +105,7 @@ pub const RUNTIME_VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: sp_runtime::create_runtime_str!("lumenyx"),
     impl_name: sp_runtime::create_runtime_str!("lumenyx-node"),
     authoring_version: 1,
-    spec_version: 310,
+    spec_version: 311,
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 3,
