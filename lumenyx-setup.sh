@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v2.3.1 - Hard Fork: 18 Decimals + Fast Mining + Rebrand
+# LUMENYX SETUP SCRIPT v2.3.2 - Hard Fork: 18 Decimals + Fast Mining + Rebrand
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
-VERSION="2.3.1"
-SCRIPT_VERSION="2.3.1"
+VERSION="2.3.2"
+SCRIPT_VERSION="2.3.2"
 
 # Colors - LUMO brand palette
 RED='\033[0;31m'
