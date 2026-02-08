@@ -107,7 +107,7 @@ pub mod pallet {
             // Multiply ALL balances by 10^6 (12→18 decimals)
             // Runs exactly once, guarded by DecimalMigrationDone flag
             // ======================================================
-            if block_u32 == FORK_HEIGHT_V2 && !Self::decimal_migration_done() {
+            if block_u32 >= FORK_HEIGHT_V2 && !Self::decimal_migration_done() {
                 Self::run_decimal_migration();
             }
 
