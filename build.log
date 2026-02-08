@@ -1,0 +1,58 @@
+    Blocking waiting for file lock on build directory
+   Compiling sc-network v0.45.6 (https://github.com/paritytech/polkadot-sdk?branch=stable2409#298f676c)
+   Compiling wasm-opt-sys v0.116.0
+   Compiling wasm-opt-cxx-sys v0.116.0
+warning: unused imports: `Decode`, `Encode`, and `MaxEncodedLen`
+  --> primitives/src/lib.rs:13:13
+   |
+13 | use codec::{Decode, Encode, MaxEncodedLen};
+   |             ^^^^^^  ^^^^^^  ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `scale_info::TypeInfo`
+  --> primitives/src/lib.rs:14:5
+   |
+14 | use scale_info::TypeInfo;
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: `lumenyx-primitives` (lib) generated 2 warnings (run `cargo fix --lib -p lumenyx-primitives` to apply 2 suggestions)
+warning: type `randomx_flags` should have an upper camel case name
+  --> crates/rx-lx-sys/src/lib.rs:27:10
+   |
+27 | pub type randomx_flags = u32;
+   |          ^^^^^^^^^^^^^ help: convert the identifier to upper camel case: `RandomxFlags`
+   |
+   = note: `#[warn(non_camel_case_types)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: `rx-lx-sys` (lib) generated 1 warning
+   Compiling pallet-halving v2.0.0 (/home/fabri/lumenyx/pallets/halving)
+   Compiling pallet-transaction-payment-rpc v41.0.0 (https://github.com/paritytech/polkadot-sdk?branch=stable2409#298f676c)
+error[E0308]: mismatched types
+   --> pallets/halving/src/lib.rs:163:22
+    |
+163 |                 Some(info)
+    |                 ---- ^^^^ expected `AccountInfo<<T as Config>::Nonce, ...>`, found `AccountInfo<u32, AccountData<u128>>`
+    |                 |
+    |                 arguments to this enum variant are incorrect
+    |
+    = note: expected struct `AccountInfo<<T as frame_system::Config>::Nonce, <T as frame_system::Config>::AccountData>`
+               found struct `AccountInfo<u32, AccountData<u128>>`
+    = help: consider constraining the associated type `<T as frame_system::Config>::Nonce` to `u32`
+    = note: for more information, visit https://doc.rust-lang.org/book/ch19-03-advanced-traits.html
+help: the type constructed contains `AccountInfo<u32, AccountData<u128>>` due to the type of the argument passed
+   --> pallets/halving/src/lib.rs:163:17
+    |
+163 |                 Some(info)
+    |                 ^^^^^----^
+    |                      |
+    |                      this argument influences the type of `Some`
+note: tuple variant defined here
+   --> /home/fabri/.rustup/toolchains/1.91.0-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:602:5
+    |
+602 |     Some(#[stable(feature = "rust1", since = "1.0.0")] T),
+    |     ^^^^
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `pallet-halving` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

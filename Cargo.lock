@@ -4645,7 +4645,7 @@ dependencies = [
 
 [[package]]
 name = "lumenyx-node"
-version = "2.3.2"
+version = "2.3.3"
 dependencies = [
  "async-channel 2.5.0",
  "async-trait",
