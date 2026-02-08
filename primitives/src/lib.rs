@@ -22,7 +22,7 @@ use sp_runtime::{
 // ============================================
 
 /// Block height at which v2.3.0 fork activates
-pub const FORK_HEIGHT_V2: u32 = 440_000;
+pub const FORK_HEIGHT_V2: u32 = 450_000;
 
 /// Multiplier for balance migration (10^6 to go from 12 to 18 decimals)
 pub const DECIMAL_MIGRATION_FACTOR: u128 = 1_000_000;
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_fork_constants() {
-        assert_eq!(FORK_HEIGHT_V2, 440_000);
+        assert_eq!(FORK_HEIGHT_V2, 450_000);
         assert_eq!(DECIMALS_PRE, 12);
         assert_eq!(DECIMALS, 18);
     }
