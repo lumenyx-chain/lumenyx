@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v2.3.2 - Hard Fork: 18 Decimals + Fast Mining + Rebrand
+# LUMENYX SETUP SCRIPT v2.3.3 - Hard Fork: 18 Decimals + Fast Mining + Rebrand
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
-VERSION="2.3.2"
-SCRIPT_VERSION="2.3.2"
+VERSION="2.3.3"
+SCRIPT_VERSION="2.3.3"
 
 # Colors - LUMO brand palette
 RED='\033[0;31m'
@@ -777,7 +777,7 @@ except Exception as e:
 }
 
 # Fork height for decimal migration (12 → 18 decimals)
-FORK_HEIGHT=440000
+FORK_HEIGHT=450000
 
 # Get current decimals based on best block number
 # Before block 440,000: 12 decimals (LUMENYX era)
