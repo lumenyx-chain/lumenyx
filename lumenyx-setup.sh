@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LUMENYX SETUP SCRIPT v2.3.0 - Hard Fork: 18 Decimals + Fast Mining + Rebrand
+# LUMENYX SETUP SCRIPT v2.3.1 - Hard Fork: 18 Decimals + Fast Mining + Rebrand
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
 
-VERSION="2.3.0"
-SCRIPT_VERSION="2.3.0"
+VERSION="2.3.1"
+SCRIPT_VERSION="2.3.1"
 
 # Colors - LUMO brand palette
 RED='\033[0;31m'
@@ -646,15 +646,23 @@ ensure_python_deps() {
         return 1
     fi
 
-    if python3 -c 'import substrateinterface' >/dev/null 2>&1; then
-        return 0
+    local need_install=false
+
+    if ! python3 -c 'import substrateinterface' >/dev/null 2>&1; then
+        need_install=true
     fi
 
-    print_info "Installing Python dependency (substrate-interface)..."
-    python3 -m pip install --user substrate-interface >/dev/null 2>&1 || {
-        print_error "Failed to install substrate-interface. Run: pip3 install --user substrate-interface"
-        return 1
-    }
+    if ! python3 -c 'from eth_account import Account' >/dev/null 2>&1; then
+        need_install=true
+    fi
+
+    if $need_install; then
+        print_info "Installing Python dependencies..."
+        python3 -m pip install --user substrate-interface eth-account >/dev/null 2>&1 || {
+            print_error "Failed to install Python dependencies. Run: pip3 install --user substrate-interface eth-account"
+            return 1
+        }
+    fi
     return 0
 }
 
@@ -696,48 +704,31 @@ get_address() {
     fi
 }
 
-get_evm_address() {
-    # Derive EVM (H160) address from the SS58 account
-    # The EVM address is the first 20 bytes of the blake2 hash of the SS58 public key
-    if [[ -f "$LUMENYX_DIR/wallet_evm.txt" ]]; then
-        cat "$LUMENYX_DIR/wallet_evm.txt" 2>/dev/null
-        return
-    fi
+derive_evm_from_mnemonic() {
+    # Derive real EVM address from BIP39 mnemonic using BIP44 path (m/44'/60'/0'/0/0)
+    # This produces the same address MetaMask would generate from the same seed phrase
+    local mnemonic="$1"
+    python3 -c "
+from eth_account import Account
+Account.enable_unaudited_hdwallet_features()
+acct = Account.from_mnemonic('$mnemonic', account_path=\"m/44'/60'/0'/0/0\")
+print(acct.address)
+print(acct.key.hex())
+" 2>/dev/null
+}
 
-    if [[ -f "$DATA_DIR/miner-key" ]]; then
-        local seed evm_addr
-        seed=$(cat "$DATA_DIR/miner-key" 2>/dev/null)
-        if [[ -n "$seed" ]] && [[ -f "$LUMENYX_DIR/$BINARY_NAME" ]]; then
-            # Get public key hex from the key inspect
-            local pub_hex
-            pub_hex=$("$LUMENYX_DIR/$BINARY_NAME" key inspect "0x$seed" 2>/dev/null | grep "Public key (hex):" | awk '{print $4}')
-            if [[ -n "$pub_hex" ]]; then
-                # EVM mapped address: first 20 bytes of blake2_256(pub_key)
-                # We can get this from the node RPC or compute it
-                # For now, try to get it via python if available
-                if command -v python3 >/dev/null 2>&1; then
-                    evm_addr=$(python3 -c "
-import hashlib
-try:
-    from substrateinterface.utils.hasher import blake2_256
-    pub = bytes.fromhex('${pub_hex}'.replace('0x',''))
-    h = blake2_256(b'evm:' + pub)
-    print('0x' + h[:20].hex())
-except:
-    # Fallback: use hashlib
-    import struct
-    pub = bytes.fromhex('${pub_hex}'.replace('0x',''))
-    h = hashlib.blake2b(b'evm:' + pub, digest_size=32).digest()
-    print('0x' + h[:20].hex())
-" 2>/dev/null || true)
-                    if [[ -n "$evm_addr" && "$evm_addr" != "0x" ]]; then
-                        echo "$evm_addr" > "$LUMENYX_DIR/wallet_evm.txt"
-                        echo "$evm_addr"
-                        return
-                    fi
-                fi
-            fi
+get_evm_address() {
+    # Return cached EVM address if available
+    if [[ -f "$LUMENYX_DIR/wallet_evm.txt" ]]; then
+        local cached
+        cached=$(cat "$LUMENYX_DIR/wallet_evm.txt" 2>/dev/null)
+        # Validate it's a real address (not the old fake derivation)
+        if [[ -n "$cached" ]] && [[ -f "$LUMENYX_DIR/evm-key" ]]; then
+            echo "$cached"
+            return
         fi
+        # Old fake address or missing evm-key — need re-derivation
+        rm -f "$LUMENYX_DIR/wallet_evm.txt" 2>/dev/null
     fi
     echo ""
 }
@@ -1118,6 +1109,12 @@ step_wallet() {
         address=$(echo "$output" | grep "SS58 Address:" | sed 's/.*SS58 Address:[[:space:]]*//')
         secret_seed=$(echo "$output" | grep "Secret seed:" | sed 's/.*Secret seed:[[:space:]]*//' | sed 's/0x//')
 
+        # Derive real EVM address from mnemonic (BIP44 - same as MetaMask)
+        local evm_output evm_address evm_privkey
+        evm_output=$(derive_evm_from_mnemonic "$seed_phrase")
+        evm_address=$(echo "$evm_output" | head -1)
+        evm_privkey=$(echo "$evm_output" | tail -1)
+
         echo ""
         echo -e "${YELLOW}╔════════════════════════════════════════════════════════════════════╗${NC}"
         echo -e "${YELLOW}║  YOUR SEED PHRASE (write it down NOW!):                            ║${NC}"
@@ -1125,7 +1122,10 @@ step_wallet() {
         echo ""
         echo -e "  ${GREEN}${BOLD}$seed_phrase${NC}"
         echo ""
-        echo -e "  Your address: ${CYAN}$address${NC}"
+        echo -e "  SS58 (mining):   ${CYAN}$address${NC}"
+        echo -e "  EVM  (MetaMask): ${CYAN}$evm_address${NC}"
+        echo ""
+        echo -e "  ${YELLOW}→ Import the same 12 words in MetaMask to use the DEX${NC}"
         echo ""
 
         mkdir -p "$DATA_DIR"
@@ -1133,6 +1133,11 @@ step_wallet() {
         chmod 600 "$DATA_DIR/miner-key"
 
         echo "Address: $address" > "$LUMENYX_DIR/wallet.txt"
+
+        # Save EVM wallet
+        echo "$evm_address" > "$LUMENYX_DIR/wallet_evm.txt"
+        echo "$evm_privkey" > "$LUMENYX_DIR/evm-key"
+        chmod 600 "$LUMENYX_DIR/evm-key"
 
         echo ""
         read -r -p "Type YES when you have saved your seed phrase: " confirm
@@ -1156,14 +1161,30 @@ step_wallet() {
             exit 1
         fi
 
+        # Derive real EVM address from mnemonic (BIP44 - same as MetaMask)
+        local evm_output evm_address evm_privkey
+        evm_output=$(derive_evm_from_mnemonic "$seed_phrase")
+        evm_address=$(echo "$evm_output" | head -1)
+        evm_privkey=$(echo "$evm_output" | tail -1)
+
         mkdir -p "$DATA_DIR"
         echo "$secret_seed" > "$DATA_DIR/miner-key"
         chmod 600 "$DATA_DIR/miner-key"
 
         echo "Address: $address" > "$LUMENYX_DIR/wallet.txt"
 
+        # Save EVM wallet
+        if [[ -n "$evm_address" ]]; then
+            echo "$evm_address" > "$LUMENYX_DIR/wallet_evm.txt"
+            echo "$evm_privkey" > "$LUMENYX_DIR/evm-key"
+            chmod 600 "$LUMENYX_DIR/evm-key"
+        fi
+
         echo ""
-        echo -e "  Your address: ${GREEN}$address${NC}"
+        echo -e "  SS58 (mining):   ${GREEN}$address${NC}"
+        if [[ -n "$evm_address" ]]; then
+            echo -e "  EVM  (MetaMask): ${GREEN}$evm_address${NC}"
+        fi
         print_ok "Wallet imported!"
     fi
 
@@ -1574,7 +1595,6 @@ create_watchdog_script() {
 set -euo pipefail
 
 SERVICE_NAME="lumenyx.service"
-LOGFILE="__DAEMON_LOGFILE__"
 
 # Thresholds (seconds)
 NO_MINING_SECS="${NO_MINING_SECS:-60}"
@@ -1590,16 +1610,21 @@ chmod 755 "${STATE_DIR}" 2>/dev/null || true
 
 now_epoch() { date +%s; }
 
-line_epoch() {
-    local line="$1"
-    local ts
-    ts="$(echo "$line" | awk '{print $1" "$2}')"
-    date -d "$ts" +%s 2>/dev/null || echo 0
+# Read recent logs from journalctl (daemon mode) with fallback to log file
+get_recent_logs() {
+    journalctl -u "$SERVICE_NAME" --since "2 min ago" --no-pager 2>/dev/null || true
 }
 
 last_line_matching() {
     local re="$1"
-    grep -E "$re" "$LOGFILE" 2>/dev/null | tail -n1 || true
+    get_recent_logs | grep -E "$re" | tail -n1 || true
+}
+
+line_epoch() {
+    local line="$1"
+    local ts
+    ts="$(echo "$line" | awk '{print $1" "$2" "$3}')"
+    date -d "$ts" +%s 2>/dev/null || echo 0
 }
 
 last_mining_epoch() {
@@ -1676,9 +1701,6 @@ main() {
 
 main "$@"
 WATCHDOG_EOF
-
-    # Replace placeholder with actual logfile path
-    sed -i "s|__DAEMON_LOGFILE__|$DAEMON_LOGFILE|g" /tmp/lumenyx-watchdog.sh
     
     sudo mv /tmp/lumenyx-watchdog.sh "$WATCHDOG_SCRIPT"
     sudo chmod +x "$WATCHDOG_SCRIPT"
@@ -2032,7 +2054,70 @@ print_dashboard() {
     echo -e "${VIOLET}════════════════════════════════════════════════════════════════════${NC}"
 }
 
+check_evm_wallet() {
+    # For existing users: if we have miner-key but no valid EVM wallet, prompt for seed phrase
+    if [[ -f "$DATA_DIR/miner-key" ]] && [[ ! -f "$LUMENYX_DIR/evm-key" ]]; then
+        # Check if eth-account is available
+        if ! python3 -c 'from eth_account import Account' >/dev/null 2>&1; then
+            return  # deps not installed yet, will be done on next ensure_python_deps
+        fi
+
+        echo ""
+        echo -e "${YELLOW}╔════════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${YELLOW}║  EVM WALLET SETUP (one-time)                                      ║${NC}"
+        echo -e "${YELLOW}║  Enter your 12-word seed phrase to derive your MetaMask address.   ║${NC}"
+        echo -e "${YELLOW}║  Press ENTER to skip (you can do this later from Useful Commands). ║${NC}"
+        echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        read -r -p "  12-word seed phrase (or ENTER to skip): " seed_phrase
+
+        if [[ -z "$seed_phrase" ]]; then
+            print_warning "Skipped. EVM address not configured. Use [7] Useful Commands to set up later."
+            sleep 2
+            return
+        fi
+
+        # Validate the seed phrase matches our SS58
+        local output address_check
+        output=$("$LUMENYX_DIR/$BINARY_NAME" key inspect "$seed_phrase" 2>&1)
+        address_check=$(echo "$output" | grep "SS58 Address:" | sed 's/.*SS58 Address:[[:space:]]*//')
+        local current_addr
+        current_addr=$(get_address)
+
+        if [[ "$address_check" != "$current_addr" ]]; then
+            print_error "Seed phrase does not match your current wallet ($current_addr)."
+            print_error "Got: $address_check"
+            sleep 3
+            return
+        fi
+
+        # Derive EVM address
+        local evm_output evm_address evm_privkey
+        evm_output=$(derive_evm_from_mnemonic "$seed_phrase")
+        evm_address=$(echo "$evm_output" | head -1)
+        evm_privkey=$(echo "$evm_output" | tail -1)
+
+        if [[ -n "$evm_address" ]]; then
+            echo "$evm_address" > "$LUMENYX_DIR/wallet_evm.txt"
+            echo "$evm_privkey" > "$LUMENYX_DIR/evm-key"
+            chmod 600 "$LUMENYX_DIR/evm-key"
+            # Remove old fake wallet_evm.txt if it existed
+            echo ""
+            print_ok "EVM wallet configured!"
+            echo -e "  EVM (MetaMask): ${GREEN}$evm_address${NC}"
+            echo -e "  ${YELLOW}→ Import the same 12 words in MetaMask to use the DEX${NC}"
+            sleep 3
+        else
+            print_error "Failed to derive EVM address. Check Python dependencies."
+            sleep 2
+        fi
+    fi
+}
+
 dashboard_loop() {
+    # One-time check: migrate existing users to real EVM wallet
+    check_evm_wallet
+
     while true; do
         print_dashboard
         echo ""
@@ -2183,7 +2268,7 @@ else:
 call = substrate.compose_call(
     call_module='EvmBridge',
     call_function='deposit',
-    call_params={'address': '$recipient', 'value': value},
+    call_params={'evm_address': '$recipient', 'amount': value},
 )
 extrinsic = substrate.create_signed_extrinsic(call=call, keypair=kp)
 try:
@@ -2232,7 +2317,7 @@ menu_receive() {
     fi
     print_dashboard
     echo ""
-    echo -e "${VIOLET}═══ RECEIVE LUMENYX ═══${NC}"
+    echo -e "${VIOLET}═══ RECEIVE LUMO ═══${NC}"
     echo ""
 
     local addr
@@ -2304,7 +2389,7 @@ menu_tx_history() {
     print_info "Scanning recent blocks for transactions..."
 
     local out
-    out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 0 --decimals "$(get_decimals)" 2>&1 || true)
+    out=$(python3 "$SUBSTRATE_TX_PY" --ws "$WS" --blocks 5000 --decimals "$(get_decimals)" 2>&1 || true)
 
     if echo "$out" | grep -q '"ok": true'; then
         echo "$out" | python3 -c 'import sys,json
@@ -2335,7 +2420,10 @@ menu_logs() {
     print_warning "Note: Ctrl+C will return to menu, mining continues in background"
     echo ""
 
-    if [[ -f "$LOG_FILE" ]]; then
+    # If running as daemon (systemd), use journalctl
+    if systemctl is-active --quiet lumenyx.service 2>/dev/null; then
+        journalctl -u lumenyx -f --no-pager
+    elif [[ -f "$LOG_FILE" ]] && [[ -s "$LOG_FILE" ]]; then
         tail -f "$LOG_FILE"
     else
         print_error "No log file found. Start mining first."
@@ -2350,14 +2438,16 @@ show_my_bootnode() {
     echo -e "${CYAN}═══ SHOW MY BOOTNODE ═══${NC}"
     echo ""
 
-    if [[ ! -f "$LOG_FILE" ]]; then
-        print_error "Log file not found: $LOG_FILE"
-        wait_enter
-        return
+    local peer_id=""
+
+    # Try journalctl first (daemon mode), then log file
+    if systemctl is-active --quiet lumenyx.service 2>/dev/null; then
+        peer_id=$(journalctl -u lumenyx --no-pager -n 200 2>/dev/null | grep "Local node identity" | tail -1 | awk '{print $NF}')
     fi
 
-    local peer_id
-    peer_id=$(grep "Local node identity" "$LOG_FILE" 2>/dev/null | tail -1 | awk '{print $NF}')
+    if [[ -z "$peer_id" ]] && [[ -f "$LOG_FILE" ]]; then
+        peer_id=$(grep "Local node identity" "$LOG_FILE" 2>/dev/null | tail -1 | awk '{print $NF}')
+    fi
 
     if [[ -z "$peer_id" ]]; then
         print_error "Peer ID not found in logs. Start the node and wait for 'Local node identity'."
