@@ -6,8 +6,8 @@
 
 set -e
 
-VERSION="2.4.0"
-SCRIPT_VERSION="2.4.0"
+VERSION="2.4.1"
+SCRIPT_VERSION="2.4.1"
 
 # Colors - LUMO brand palette
 RED='\033[0;31m'
@@ -777,7 +777,7 @@ except Exception as e:
 }
 
 # Fork height for decimal migration (12 → 18 decimals)
-FORK_HEIGHT=440000
+FORK_HEIGHT=490000
 
 # Get current decimals based on best block number
 # Before block 470,000: 12 decimals (LUMENYX era)
