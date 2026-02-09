@@ -190,7 +190,7 @@ The foundation is yours. Build the future on it.
 | Version | Block | Changes |
 |---------|-------|---------|
 | v2.2.5 | 125,000 | ASERT difficulty fix |
-| v2.3.3 | 450,000 | 18 decimals, fast mining, ticker LUMO |
+| v2.4.1 | 490,000 | 18 decimals, fast mining, ticker LUMO |
 
 ---
 
