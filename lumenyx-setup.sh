@@ -419,7 +419,7 @@ def main():
     except Exception:
         raise SystemExit("Missing dependency: substrate-interface. Install with: pip3 install --user substrate-interface")
 
-    substrate = SubstrateInterface(url=args.ws)
+    substrate = SubstrateInterface(url=args.ws, ws_options={"open_timeout": 3, "close_timeout": 2})
     kp = Keypair.create_from_seed(bytes.fromhex(seed_hex), crypto_type=KeypairType.SR25519)
 
     call = substrate.compose_call(
@@ -486,7 +486,7 @@ def main():
         sys.exit(2)
 
     try:
-        substrate = SubstrateInterface(url=args.ws)
+        substrate = SubstrateInterface(url=args.ws, ws_options={"open_timeout": 3, "close_timeout": 2})
     except Exception as e:
         print(json.dumps({"ok": False, "error": "Connect failed: " + str(e)}))
         sys.exit(1)
@@ -585,7 +585,7 @@ def main():
         sys.exit(1)
 
     try:
-        substrate = SubstrateInterface(url=args.ws)
+        substrate = SubstrateInterface(url=args.ws, ws_options={"open_timeout": 3, "close_timeout": 2})
     except Exception as e:
         print(json.dumps({"ok": False, "error": "Connect failed: " + str(e)}))
         sys.exit(1)
@@ -752,11 +752,11 @@ get_evm_balance() {
 
     local out dec
     dec=$(get_decimals)
-    out=$(python3 -c "
+    out=$(timeout 5 python3 -c "
 import json, sys
 try:
     from substrateinterface import SubstrateInterface
-    substrate = SubstrateInterface(url='$WS')
+    substrate = SubstrateInterface(url='$WS', ws_options={'open_timeout': 3, 'close_timeout': 2})
     result = substrate.rpc_request('eth_getBalance', ['$evm_addr', 'latest'])
     bal_hex = result.get('result', '0x0')
     bal = int(bal_hex, 16)
@@ -777,7 +777,7 @@ except Exception as e:
 }
 
 # Fork height for decimal migration (12 → 18 decimals)
-FORK_HEIGHT=470000
+FORK_HEIGHT=440000
 
 # Get current decimals based on best block number
 # Before block 470,000: 12 decimals (LUMENYX era)
@@ -805,7 +805,7 @@ get_balance() {
 
     local out ok free
     local dec=$(get_decimals)
-    out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode balance --decimals "$dec" 2>/dev/null || true)
+    out=$(timeout 5 python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode balance --decimals "$dec" 2>/dev/null || true)
     ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
 
     if [[ "$ok" == "true" ]]; then
@@ -829,7 +829,7 @@ get_block() {
     ensure_python_deps >/dev/null || { echo "offline|0|false"; return; }
 
     local out ok best target syncing
-    out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode block 2>/dev/null || true)
+    out=$(timeout 5 python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode block 2>/dev/null || true)
     ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
     if [[ "$ok" == "true" ]]; then
         best=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("best",""))' 2>/dev/null || true)
@@ -850,7 +850,7 @@ get_peers() {
     ensure_python_deps >/dev/null || { echo "0"; return; }
 
     local out ok peers
-    out=$(python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode peers 2>/dev/null || true)
+    out=$(timeout 5 python3 "$SUBSTRATE_DASH_PY" --ws "$WS" --mode peers 2>/dev/null || true)
     ok=$(echo "$out" | grep -o '"ok": *[^,]*' | cut -d':' -f2 | tr -d ' }')
     if [[ "$ok" == "true" ]]; then
         peers=$(echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("peers",0))' 2>/dev/null || echo "0")
@@ -862,6 +862,15 @@ get_peers() {
 }
 
 get_bootnodes() {
+    # Try to download from GitHub first
+    local auto_bn
+    auto_bn=$(curl -sL "$BOOTNODES_URL" 2>/dev/null | grep -v "^#" | grep -v "^$" | head -1)
+    if [[ -n "$auto_bn" ]]; then
+        echo -e "${GREEN}✓ Bootnode found automatically${NC}" >&2
+        echo "$auto_bn"
+        return
+    fi
+    
     echo "" >&2
     echo -e "${CYAN}═══ BOOTNODE SETUP ═══${NC}" >&2
     echo "" >&2
@@ -2418,7 +2427,7 @@ menu_send() {
             local dec_now
             dec_now=$(get_decimals)
             local out ok hash err
-            out=$(python3 -c "
+            out=$(timeout 5 python3 -c "
 import json, sys, os
 SEED_FILE = os.path.expanduser('~/.local/share/lumenyx-node/miner-key')
 seed = open(SEED_FILE).read().strip().lower()
